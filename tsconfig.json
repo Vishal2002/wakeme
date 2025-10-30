@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",          // Or "ESNext" for latest JS features
+    "module": "ES2022",          // Key fix: Output ES modules (matches "type": "module")
+    "moduleResolution": "node",  // For Node.js-style imports
+    "esModuleInterop": true,     // Allows default imports from CommonJS libs
+    "allowSyntheticDefaultImports": true,
+    "strict": true,              // Enforce strict type checking
+    "skipLibCheck": true,        // Speed up compilation
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "./dist",          // Output to dist/
+    "rootDir": "./src",             // Adjust if src/ folder exists (e.g., "./src")
+    "declaration": false         // Optional: Skip .d.ts files if not needed
+  },
+  "include": [
+    "**/*.ts"                    // Compile all .ts files
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
+}
