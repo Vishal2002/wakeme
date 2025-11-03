@@ -7,11 +7,15 @@ export const keyboards = {
   main: Markup.keyboard([
     ['🚌 Bus', '🚆 Train'],
     ['📊 Status', '❌ Cancel']
-  ]).resize(),
+  ])
+  .resize()
+  .persistent(),
 
   shareContact: Markup.keyboard([
     Markup.button.contactRequest('📱 Share Phone Number')
-  ]).resize().oneTime(),
+  ])
+  .resize()
+  .oneTime(),
 
   confirmTrain: Markup.inlineKeyboard([
     [

@@ -3,6 +3,7 @@ import { message } from 'telegraf/filters';
 import { userQueries, tripQueries } from '../database/queries.js';
 import { trainService } from '../services/train.service.js';
 import { keyboards } from '../services/telegram.service.js';
+import { locationService } from '../services/location.service.js';
 
 export async function handleBusButton(ctx: Context) {
   if (!ctx.from) return;
@@ -137,13 +138,29 @@ if (!ctx.from || !ctx.message || !('text' in ctx.message)) return;
   }
 
   // Handle destination name
-  if (trip && trip.status === 'awaiting_destination') {
-    console.log(`📍 Setting destination for trip ${trip.id}: ${text}`);
-    
+  // When user sends destination name
+if (trip && trip.status === 'awaiting_destination') {
+  console.log(`📍 Setting destination for trip ${trip.id}: ${text}`);
+  
+  // Get lat/lng from city name
+  const location = await locationService.geocodeAddress(text);
+  
+  if (location) {
+    await tripQueries.setBusDestination(
+      trip.id, 
+      text, 
+      location.lat, 
+      location.lng
+    );
+    console.log(`✅ Set destination: ${text} (${location.lat}, ${location.lng})`);
+  } else {
     await tripQueries.setBusDestination(trip.id, text);
-    await requestPhoneNumber(ctx, trip);
-    return;
+    console.log(`⚠️ Set destination without coordinates: ${text}`);
   }
+  
+  await requestPhoneNumber(ctx, trip);
+  return;
+}
 
   // Default response
   await ctx.reply(

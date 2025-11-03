@@ -138,8 +138,8 @@ export const tripQueries = {
         FROM trips
         JOIN users ON trips.user_telegram_id = users.telegram_id
         WHERE trips.status = 'active' 
-        AND trips.alert_time <= NOW();
-        AND t.alert_time IS NOT NULL
+        AND trips.alert_time <= NOW()
+        -- Remove this line: AND t.alert_time IS NOT NULL
       `);
     return result.rows;
   },

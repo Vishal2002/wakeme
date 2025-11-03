@@ -1,9 +1,11 @@
 import { Context } from 'telegraf';
 import { userQueries, tripQueries } from '../database/queries.js';
-import { bot, keyboards, formatTripStatus } from '../services/telegram.service.js';
+import { keyboards, formatTripStatus } from '../services/telegram.service.js';
 
 export async function handleStart(ctx: Context) {
   if (!ctx.from) return;
+  
+  console.log(`👤 User ${ctx.from.id} started bot`);
   
   await userQueries.createUser(
     ctx.from.id,
@@ -17,6 +19,8 @@ export async function handleStart(ctx: Context) {
     `Where are you travelling today?`,
     keyboards.main
   );
+  
+  console.log('✅ Sent keyboard to user');
 }
 
 export async function handleStatus(ctx: Context) {
@@ -69,7 +73,6 @@ export async function handleHelp(ctx: Context) {
   );
 }
 
-// Add debug command to check database
 export async function handleDebug(ctx: Context) {
   if (!ctx.from) return;
   
@@ -101,7 +104,7 @@ export async function handleDebug(ctx: Context) {
     }
     
     await ctx.reply(debugInfo, { parse_mode: 'Markdown' });
-  } catch (error:any) {
+  } catch (error: any) {
     await ctx.reply(`❌ Debug error: ${error.message}`);
   }
 }
