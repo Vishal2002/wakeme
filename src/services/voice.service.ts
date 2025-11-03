@@ -1,198 +1,266 @@
 import axios from 'axios';
 import { config } from '../config/env.js';
 import { callQueries } from '../database/queries.js';
+import { bot } from './telegram.service.js';
 import type { Trip } from '../types/index.js';
 
 export class VoiceService {
-  private apiKey: string;
-  private baseUrl = 'https://api.vapi.ai';
+  private readonly apiUrl = 'https://api.bland.ai/v1/calls';
 
   constructor() {
-    this.apiKey = config.VAPI_API_KEY!;
-    
-    if (!this.apiKey) {
-      throw new Error('VAPI_API_KEY not configured in .env');
+    if (!config.BLAND_API_KEY) {
+      throw new Error('BLAND_API_KEY required in .env. Get it from: https://app.bland.ai/settings/api-keys');
     }
+    console.log('✅ Bland.ai voice service initialized');
   }
 
-  async makeWakeUpCall(trip: Trip, phone: string, attempt: number = 1): Promise<string | null> {
+  /**
+   * Make a wake-up call using Bland.ai
+   * @param trip - Trip object with user phone number
+   * @param attempt - Call attempt number (1-5)
+   * @returns Call ID if successful, null if failed
+   */
+  async makeWakeUpCall(trip: Trip & { phone: string }, attempt: number = 1): Promise<string | null> {
     try {
-      console.log(`📞 Making VAPI call to ${phone} (Attempt ${attempt})`);
-      
-      const formattedPhone = this.formatPhoneNumber(phone);
-      console.log(`📞 Formatted: ${formattedPhone}`);
+      console.log(`📞 [Attempt ${attempt}/5] Queuing Bland.ai call to ${trip.phone}`);
+      console.log(`   Trip: ${trip.type} to ${trip.to_location}`);
 
-      // CORRECT VAPI API CALL
+      const formattedPhone = this.formatPhoneNumber(trip.phone);
+
       const response = await axios.post(
-        `${this.baseUrl}/call`,  // ✅ Correct endpoint
+        this.apiUrl,
         {
-          // Phone number to call
-          phoneNumberId: null, // null for outbound without owned number
-          customer: {
-            number: formattedPhone
-          },
-
-          // Assistant configuration (transient - not saved)
-          assistant: {
-            // First message
-            firstMessage: this.getFirstMessage(trip, attempt),
-            
-            // Model config
-            model: {
-              provider: 'openai',
-              model: 'gpt-4',
-              messages: [
-                {
-                  role: 'system',
-                  content: this.getSystemPrompt(trip, attempt)
-                }
-              ]
-            },
-
-            // Voice config
-            voice: {
-              provider: 'azure',
-              voiceId: 'en-IN-NeerjaNeural' // Indian female
-            },
-
-            // End call settings
-            endCallMessage: 'Have a safe journey! Goodbye.',
-            endCallPhrases: [
-              "i'm awake",
-              "yes i'm up", 
-              "i am awake",
-              "okay i'm ready"
-            ],
-
-            // Call limits
-            silenceTimeoutSeconds: 30,
-            maxDurationSeconds: 180,
-
-            // Transcriber
-            transcriber: {
-              provider: 'deepgram',
-              model: 'nova-2',
-              language: 'en-IN'
-            },
-
-            // ✅ CORRECT: Server URL configuration
-            serverUrl: `${config.SERVER_URL}/vapi/server-messages`,
-            
-            // ✅ CORRECT: Server Messages to receive
-            serverMessages: [
-              'end-of-call-report',
-              'transcript',
-              'status-update'
-            ]
-          },
-
-          // Metadata (passed to server URL)
+          // Required fields
+          phone_number: formattedPhone,
+          task: this.generatePrompt(trip, attempt),
+          
+          // Call configuration
+          first_sentence: this.getFirstMessage(trip, attempt),
+          voice: 'maya', // Indian English female voice
+          language: 'en-IN', // Indian English accent
+          max_duration: 3, // 3 minutes maximum
+          
+          // Webhook for call completion events
+          webhook: `${config.SERVER_URL}/bland/webhook`,
+          
+          // Metadata (returned in webhook)
           metadata: {
             trip_id: trip.id,
+            user_telegram_id: trip.user_telegram_id,
             attempt: attempt,
             destination: trip.to_location,
-            user_telegram_id: trip.user_telegram_id
+            type: trip.type,
+            timestamp: new Date().toISOString()
+          },
+          
+          // Call behavior
+          wait_for_greeting: false, // AI speaks first
+          temperature: 0.7, // Balanced creativity
+          interruption_threshold: 100, // Default responsiveness
+          
+          // Voicemail handling
+          voicemail: {
+            action: 'leave_message',
+            message: `Hi, this is WakeMe. You're approaching ${trip.to_location}. Please wake up! We'll call again soon.`
+          },
+          
+          // Retry configuration (optional - Bland.ai will retry automatically)
+          retry: {
+            wait: 120, // Wait 2 minutes before retry
+            voicemail_action: 'leave_message'
           }
         },
         {
           headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
+            'authorization': config.BLAND_API_KEY,
             'Content-Type': 'application/json'
           }
         }
       );
 
-      const callId = response.data.id;
-      await callQueries.logCall(trip.id, callId, attempt, 'initiated');
+      const callId = response.data.call_id;
       
-      console.log(`✅ VAPI call created: ${callId}`);
-      console.log(`   Status: ${response.data.status}`);
-      
+      // Log call to database
+      await callQueries.logCall(trip.id, callId, attempt, 'queued');
+
+      console.log(`✅ Call queued successfully: ${callId}`);
+      if (response.data.batch_id) {
+        console.log(`   Batch ID: ${response.data.batch_id}`);
+      }
+
+      // Notify user via Telegram
+      await bot.telegram.sendMessage(
+        trip.user_telegram_id,
+        `📞 Wake-up call queued! (Attempt ${attempt}/5)\n` +
+        `📍 ~30 minutes to ${trip.to_location}\n` +
+        `Answer and say "I'm awake" clearly.`
+      );
+
       return callId;
 
     } catch (error: any) {
-      console.error('❌ VAPI call failed:');
+      console.error('❌ Bland.ai call failed:');
       
       if (error.response) {
-        console.error('Status:', error.response.status);
-        console.error('Error:', JSON.stringify(error.response.data, null, 2));
+        const status = error.response.status;
+        const data = error.response.data;
+        
+        console.error(`   Status: ${status}`);
+        console.error(`   Message: ${data?.message || 'Unknown error'}`);
+        
+        if (data?.errors) {
+          console.error(`   Errors: ${JSON.stringify(data.errors, null, 2)}`);
+        }
+
+        // User-friendly error messages
+        switch (status) {
+          case 400:
+            console.error('   💡 Fix: Check phone number format (+91XXXXXXXXXX) and task length');
+            break;
+          case 401:
+            console.error('   💡 Fix: Invalid API key. Check BLAND_API_KEY in .env');
+            break;
+          case 402:
+            console.error('   💡 Fix: Insufficient credits. Add funds at https://app.bland.ai/billing');
+            break;
+          case 403:
+            console.error('   💡 Fix: Account suspended or verification needed');
+            break;
+          case 429:
+            console.error('   💡 Fix: Rate limited. Wait 30 seconds and try again');
+            break;
+        }
       } else {
-        console.error('Error:', error.message);
+        console.error(`   Error: ${error.message}`);
       }
-      
+
+      // Notify user of failure
+      try {
+        await bot.telegram.sendMessage(
+          trip.user_telegram_id,
+          `⚠️ Call attempt ${attempt} failed. Retrying in 2 minutes...`
+        );
+      } catch (notifyError) {
+        console.error('   Failed to notify user:', notifyError);
+      }
+
       return null;
     }
   }
 
-  private formatPhoneNumber(phone: string): string {
-    let cleaned = phone.replace(/[\s\-\(\)]/g, '');
-    
-    if (cleaned.startsWith('+91')) return cleaned;
-    if (cleaned.startsWith('91')) return '+' + cleaned;
-    if (cleaned.length === 10) return '+91' + cleaned;
-    
-    return cleaned;
-  }
-
+  /**
+   * Get the opening message based on attempt number
+   */
   private getFirstMessage(trip: Trip, attempt: number): string {
     if (attempt === 1) {
-      return `Hello! This is your WakeMe travel wake-up call. You are 30 minutes away from ${trip.to_location}. Are you awake?`;
+      return `Hello! This is WakeMe. Your ${trip.type} to ${trip.to_location} arrives in 30 minutes. Are you awake? Please say "I'm awake" clearly.`;
     } else if (attempt === 2) {
-      return `Wake up! This is your second call. You're approaching ${trip.to_location}. Please confirm you're awake!`;
+      return `Wake up! This is your second call from WakeMe. You're approaching ${trip.to_location}. Please confirm you're awake by saying "I'm awake".`;
     } else {
-      return `URGENT! This is your final wake-up call! You will miss ${trip.to_location} if you don't wake up now!`;
+      return `URGENT! This is attempt ${attempt} from WakeMe. You will miss ${trip.to_location} if you don't wake up now! Say "I'm awake" immediately!`;
     }
   }
 
-  private getSystemPrompt(trip: Trip, attempt: number): string {
-    const urgency = attempt === 1 ? 'friendly and calm' : 
-                    attempt === 2 ? 'firm but polite' : 
-                    'urgent and very insistent';
+  /**
+   * Generate AI prompt with context and instructions
+   */
+  private generatePrompt(trip: Trip, attempt: number): string {
+    const urgency = attempt === 1 ? 'friendly and gentle' : 
+                    attempt === 2 ? 'firm and encouraging' : 
+                    'urgent but polite';
 
-    return `You are a travel wake-up assistant. Your job is to wake up a traveler who is ${urgency}.
+    return `You are WakeMe, a helpful travel wake-up assistant. Your mission is to wake a sleeping traveler to ensure they don't miss their destination.
 
 CONTEXT:
-- Traveler destination: ${trip.to_location}
-- Travel mode: ${trip.type}
-- Distance remaining: 30 minutes
+- Destination: ${trip.to_location}
+- Travel mode: ${trip.type} (bus or train)
+- Time remaining: 30 minutes
 - Call attempt: ${attempt} of 5
+- Urgency level: ${urgency}
 
-YOUR MISSION:
-Wake up the traveler and get CLEAR verbal confirmation they are awake. Be ${urgency}.
+YOUR INSTRUCTIONS:
+1. Start with the provided first_sentence
+2. Speak slowly and clearly in neutral Indian English (en-IN accent)
+3. Your ONLY goal: Get explicit verbal confirmation they are FULLY AWAKE
+4. Keep responses short (10-15 seconds each)
+5. Be ${urgency} in tone but always respectful
 
-RULES:
-1. Speak clearly in Indian English
-2. Be ${urgency} but always polite
-3. Don't hang up until you hear: "I'm awake", "Yes I'm up", or similar
-4. If they mumble or say "hmm", that's NOT confirmation
-5. Keep asking until you get clear confirmation
-6. Provide helpful info: destination, arrival time
-7. Maximum 2-3 minutes, then end
-8. If user is angry, apologize and end
+CONFIRMATION LOOP:
+- If you hear: "I'm awake", "Yes I'm up", "Okay ready", "I am awake" → END CALL immediately
+- If you hear: mumbling, "hmm", "uh", unclear sounds, or silence → Say: "Sorry, I didn't hear clearly. Please say 'I'm awake' now."
+- Keep asking politely until you get CLEAR confirmation
+- After 3 unclear responses, say: "I'll call back in 2 minutes" → END CALL
 
-ACCEPTABLE CONFIRMATIONS:
-- "I'm awake"
-- "Yes, I'm up"
-- "Okay, I'm ready"
-- Clear, coherent speech confirming they're awake
+HELPFUL TIPS TO PROVIDE:
+- "You'll reach ${trip.to_location} in about 30 minutes"
+- "Please gather your belongings"
+- "Check for your stop announcement"
+- "Make sure you're sitting up"
 
-NOT ACCEPTABLE:
-- Mumbling, grunts, "hmm", "uh"
-- Unclear sounds
-- No response
-
-HELPFUL PHRASES:
-- "You'll reach ${trip.to_location} in 30 minutes"
-- "I need to make sure you won't miss your stop"
-- "Can you please say 'I'm awake' clearly?"
-- "Are you sitting up? Good!"
+ESCALATION (if attempt > 2):
+- Add urgency: "This is very important - you might miss your stop!"
+- Be more insistent but still polite
 
 END CALL WHEN:
-- Clear confirmation received
-- User gets angry (apologize first)
-- 2-3 minutes passed
+- User clearly says "I'm awake" or similar (✅ Success)
+- User becomes angry or frustrated (apologize and end)
+- Maximum duration reached (3 minutes)
+- User explicitly asks to end call
 
-Speak naturally, be helpful, ensure they're truly awake before ending.`;
+NEVER:
+- Don't discuss other topics
+- Don't give medical advice
+- Don't make assumptions about why they're sleeping
+- Don't be rude or aggressive even if frustrated
+
+Remember: You're like a caring friend ensuring someone wakes up for an important journey. Be persistent but kind!`;
+  }
+
+  /**
+   * Format and validate phone number
+   * Ensures E.164 format: +91XXXXXXXXXX
+   */
+  private formatPhoneNumber(phone: string): string {
+    // Remove all formatting characters
+    let cleaned = phone.replace(/[\s\-\(\)\+]/g, '');
+    
+    // If 10 digits, add +91
+    if (cleaned.length === 10 && /^\d{10}$/.test(cleaned)) {
+      return '+91' + cleaned;
+    }
+    
+    // If starts with 91 and is 12 digits, add +
+    if (cleaned.startsWith('91') && cleaned.length === 12) {
+      return '+' + cleaned;
+    }
+    
+    // Already formatted correctly
+    if (cleaned.startsWith('+91') && cleaned.length === 13) {
+      return cleaned;
+    }
+    
+    // Invalid format
+    throw new Error(`Invalid phone number: ${phone}. Expected format: +91XXXXXXXXXX (10 digits after +91)`);
+  }
+
+  /**
+   * Get call status from Bland.ai (for debugging)
+   */
+  async getCallStatus(callId: string): Promise<any> {
+    try {
+      const response = await axios.get(
+        `https://api.bland.ai/v1/calls/${callId}`,
+        {
+          headers: {
+            'authorization': config.BLAND_API_KEY
+          }
+        }
+      );
+      return response.data;
+    } catch (error: any) {
+      console.error('Failed to get call status:', error.message);
+      return null;
+    }
   }
 }
 

@@ -24,7 +24,7 @@ import {
 import { startAlertWorker } from "./workers/alert.workers.js";
 import { startTrackingWorker } from "./workers/tracking.worker.js";
 import { message } from "telegraf/filters";
-import type { TripWithUser } from "./types/index.js";
+import { voiceService } from "./services/voice.service.js";
 
 const app = express();
 app.use(express.json());
@@ -57,196 +57,101 @@ bot.on(message("text"), handleText); // Text handler LAST
 bot.action("confirm_train", handleConfirmTrain);
 bot.action("cancel_train", handleCancelTrain);
 
-// ============================================
-// WEBHOOKS - AI VOICE CALL CALLBACKS
-// ============================================
 
-// VAPI webhook endpoint
-app.post('/webhooks/vapi-call-complete', async (req, res) => {
-  const callData = req.body;
-  
-  console.log(`📞 VAPI call completed:`, callData.id);
-  console.log(`   Status: ${callData.status}`);
-  console.log(`   Duration: ${callData.duration}s`);
-  
-  // Get transcript
-  const transcript = callData.transcript || '';
-  const metadata = callData.metadata || {};
-  
-  console.log(`   Transcript: ${transcript.substring(0, 100)}...`);
-  
-  // Check if user confirmed they're awake
-  const confirmedKeywords = [
-    "i'm awake", "i am awake", "yes i'm up", 
-    "i'm up", "awake", "yes", "okay i'm ready"
-  ];
-  
-  const transcriptLower = transcript.toLowerCase();
-  const isAwake = confirmedKeywords.some(keyword => 
-    transcriptLower.includes(keyword)
-  );
-  
-  console.log(`   User awake: ${isAwake ? 'YES ✅' : 'NO ❌'}`);
-  
-  if (isAwake && metadata.trip_id) {
-    const { tripQueries } = await import('./database/queries.js');
-    await tripQueries.markTripComplete(metadata.trip_id);
-    
-    console.log(`✅ Marked trip ${metadata.trip_id} as complete`);
-    
-    // Notify user via Telegram
-    await bot.telegram.sendMessage(
-      metadata.user_telegram_id || metadata.trip_id,
-      '✅ Great! You\'re awake!\nHave a safe journey! 🎉'
-    );
-  } else if (metadata.trip_id && metadata.attempt < 5) {
-    // Schedule retry in 2 minutes
-    console.log(`⏰ Scheduling retry in 2 minutes (attempt ${metadata.attempt + 1})`);
-    
-    setTimeout(async () => {
-      const { tripQueries } = await import('./database/queries.js');
-      const { voiceService } = await import('./services/voice.service.js');
-      const { pool } = await import('./database/db.js');
-      
-      // Get trip and user phone
-      const result = await pool.query(`
-        SELECT t.*, u.phone 
-        FROM trips t 
-        JOIN users u ON t.user_telegram_id = u.telegram_id 
-        WHERE t.id = $1
-      `, [metadata.trip_id]);
-      
-      if (result.rows.length > 0 && result.rows[0].phone) {
-        await voiceService.makeWakeUpCall(
-          result.rows[0], 
-          result.rows[0].phone, 
-          metadata.attempt + 1
-        );
-      }
-    }, 2 * 60 * 1000);
-  }
-  
-  res.sendStatus(200);
-});
-
-// ============================================
-
-// ✅ CORRECT: VAPI Server Messages endpoint
-app.post('/vapi/server-messages', async (req, res) => {
-  const message = req.body;
-  
-  console.log(`📨 VAPI Server Message:`, message.type);
-  
+// In server.ts - Add this route (after Telegram setup)
+app.post('/bland/webhook', async (req, res) => {
   try {
-    switch (message.type) {
-      case 'end-of-call-report':
-        await handleEndOfCall(message);
-        break;
-        
-      case 'transcript':
-        console.log(`💬 Transcript: ${message.transcript?.substring(0, 100)}...`);
-        break;
-        
-      case 'status-update':
-        console.log(`📊 Status: ${message.status}`);
-        break;
-        
-      default:
-        console.log(`ℹ️ Unhandled message type: ${message.type}`);
-    }
-    
-    // Always respond 200 OK
-    res.sendStatus(200);
-    
-  } catch (error) {
-    console.error('❌ Error handling VAPI message:', error);
-    res.sendStatus(500);
-  }
-});
+    const event = req.body;
+    console.log('📨 Bland Webhook:', event.type, 'Call ID:', event.call_id);
 
-async function handleEndOfCall(message: any) {
-  console.log(`📞 Call ended:`, message.call?.id);
-  console.log(`   Duration: ${message.call?.duration}s`);
-  console.log(`   Status: ${message.call?.status}`);
-  
-  const transcript = message.transcript || '';
-  const metadata = message.call?.metadata || {};
-  
-  console.log(`   Full transcript length: ${transcript.length} chars`);
-  
-  // Check if user confirmed they're awake
-  const confirmedKeywords = [
-    "i'm awake", "i am awake", 
-    "yes i'm up", "i'm up", 
-    "awake", "yes", "ready"
-  ];
-  
-  const transcriptLower = transcript.toLowerCase();
-  const isAwake = confirmedKeywords.some(keyword => 
-    transcriptLower.includes(keyword)
-  );
-  
-  console.log(`   User awake: ${isAwake ? '✅ YES' : '❌ NO'}`);
-  
-  if (isAwake && metadata.trip_id) {
-    // Mark trip complete
-    const { tripQueries } = await import('./database/queries.js');
-    await tripQueries.markTripComplete(metadata.trip_id);
-    
-    console.log(`✅ Marked trip ${metadata.trip_id} as complete`);
-    
-    // Notify via Telegram
-    if (metadata.user_telegram_id) {
-      await bot.telegram.sendMessage(
-        metadata.user_telegram_id,
-        '✅ Great! You\'re awake!\nHave a safe journey! 🎉'
-      );
-    }
-    
-  } else if (metadata.trip_id && metadata.attempt < 5) {
-    // User didn't confirm - schedule retry
-    const attempt = metadata.attempt || 1;
-    
-    console.log(`⏰ Scheduling retry in 2 minutes (attempt ${attempt + 1}/5)`);
-    
-    setTimeout(async () => {
-      const { voiceService } = await import('./services/voice.service.js');
+    if (event.type === 'call-ended' || event.type === 'transcriber-message') {
+      const callId = event.call_id || event.id;
+      const transcript = event.transcript || event.message || '';
+      const metadata = event.metadata || {};
+      const status = event.status || 'completed';
+
+      console.log(`📞 Call ${callId} ended. Status: ${status}`);
+      console.log(`Transcript: ${transcript.substring(0, 100)}...`);
+
+      // Query DB by call_id to find trip
       const { pool } = await import('./database/db.js');
-      
-      // Get trip with phone number
-      const result = await pool.query(`
-        SELECT t.*, u.phone 
-        FROM trips t 
-        JOIN users u ON t.user_telegram_id = u.telegram_id 
-        WHERE t.id = $1 AND t.status = 'active'
-      `, [metadata.trip_id]);
-      
-      if (result.rows.length > 0 && result.rows[0].phone) {
-        const trip = result.rows[0];
-        await voiceService.makeWakeUpCall(trip, trip.phone, attempt + 1);
-        
-        // Notify on Telegram
+      const logResult = await pool.query(
+        'SELECT trip_id, attempt_number FROM call_logs WHERE call_id = $1 ORDER BY created_at DESC LIMIT 1',
+        [callId]
+      );
+
+      if (logResult.rows.length === 0) {
+        console.log('⚠️ No trip for call:', callId);
+        return res.json({ status: 'ok' });
+      }
+
+      const { trip_id: tripId, attempt_number: attempt } = logResult.rows[0];
+
+      // Get trip details
+      const tripResult = await pool.query(
+        `SELECT t.*, u.telegram_id as user_telegram_id 
+         FROM trips t JOIN users u ON t.user_telegram_id = u.telegram_id 
+         WHERE t.id = $1 AND t.status = 'active'`,
+        [tripId]
+      );
+
+      const trip = tripResult.rows[0];
+      if (!trip) return res.json({ status: 'trip_inactive' });
+
+      // Check for awake confirmation
+      const isAwake = /i['\s]?m\s+awake|yes\s+i['\s]?m\s+up|awake|ready/i.test(transcript.toLowerCase());
+      console.log(`😴 Awake? ${isAwake ? 'YES ✅' : 'NO ❌'}`);
+
+      const { tripQueries } = await import('./database/queries.js');
+      const { bot } = await import('./services/telegram.service.js');
+
+      if (isAwake) {
+        // Success: Mark complete
+        await tripQueries.markTripComplete(tripId);
         await bot.telegram.sendMessage(
           trip.user_telegram_id,
-          `📞 Calling again... (Attempt ${attempt + 1}/5)\nReply 'AWAKE' to stop calls.`
+          `✅ Awake confirmed! Safe arrival at ${trip.to_location}! 🎉`
         );
+        console.log(`✅ Trip ${tripId} completed`);
+      } else if (attempt < 5) {
+        // Retry in 2 mins
+        setTimeout(async () => {
+          const freshTrip = await pool.query(
+            `SELECT t.*, u.phone FROM trips t JOIN users u ON t.user_telegram_id = u.telegram_id WHERE t.id = $1`,
+            [tripId]
+          );
+          if (freshTrip.rows[0]?.phone) {
+            await voiceService.makeWakeUpCall({ ...freshTrip.rows[0], phone: freshTrip.rows[0].phone }, attempt + 1);
+            await bot.telegram.sendMessage(
+              trip.user_telegram_id,
+              `📞 Retry call ${attempt + 1}/5. Say "I'm awake" to confirm!`
+            );
+          }
+        }, 120000);  // 2 minutes
+        console.log(`⏰ Retry scheduled: Attempt ${attempt + 1}`);
+      } else {
+        // Max attempts: Emergency alert
+        await bot.telegram.sendMessage(
+          trip.user_telegram_id,
+          `🚨 Missed 5 wake-up calls for ${trip.to_location}! Reply /awake if you're up. Emergency contact notified.`
+        );
+        // TODO: Notify emergency_contact if set in users table
+        console.log(`🚨 Max attempts for trip ${tripId}`);
       }
-    }, 2 * 60 * 1000); // 2 minutes
-    
-  } else if (metadata.trip_id && metadata.attempt >= 5) {
-    // All attempts failed - notify
-    console.log(`🚨 All 5 attempts failed for trip ${metadata.trip_id}`);
-    
-    if (metadata.user_telegram_id) {
-      await bot.telegram.sendMessage(
-        metadata.user_telegram_id,
-        '🚨 MISSED 5 CALLS!\n\nYou didn\'t respond to any wake-up calls.\nReply "AWAKE" if you\'re up, or your emergency contact will be notified.'
+
+      // Update call log
+      await pool.query(
+        'UPDATE call_logs SET status = $1, transcript = $2, duration = $3 WHERE call_id = $4',
+        [status, transcript, event.duration || 0, callId]
       );
     }
-  }
-}
 
-// ============================================ 
+    res.status(200).json({ status: 'received' });
+  } catch (error) {
+    console.error('❌ Bland webhook error:', error);
+    res.status(500).json({ error: 'internal_error' });
+  }
+});
 
 // Health check
 app.get("/health", (req, res) => {

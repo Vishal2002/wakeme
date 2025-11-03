@@ -13,10 +13,8 @@ export const config = {
   TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN!,
   TELEGRAM_BOT_USERNAME: process.env.TELEGRAM_BOT_USERNAME,
   
-  // AI Voice Services (Choose one)
-  BLAND_API_KEY: process.env.BLAND_API_KEY, // bland.ai
-  VAPI_API_KEY: process.env.VAPI_API_KEY,   // vapi.ai
-  VOICE_SERVICE: process.env.VOICE_SERVICE || 'bland', // 'bland' or 'vapi'
+  // AI Voice Service - Bland.ai
+  BLAND_API_KEY: process.env.BLAND_API_KEY!,
   
   // Optional APIs
   GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY,
@@ -24,9 +22,11 @@ export const config = {
 };
 
 // Validate required env vars
-const required = ['DATABASE_URL', 'TELEGRAM_BOT_TOKEN'];
+const required = ['DATABASE_URL', 'TELEGRAM_BOT_TOKEN', 'BLAND_API_KEY'];
 for (const key of required) {
   if (!process.env[key]) {
-    throw new Error(`Missing required environment variable: ${key}`);
+    throw new Error(`❌ Missing required environment variable: ${key}`);
   }
 }
+
+console.log('✅ Environment variables loaded successfully');

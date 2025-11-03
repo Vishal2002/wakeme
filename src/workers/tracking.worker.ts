@@ -4,7 +4,7 @@ import { tripQueries } from '../database/queries.js';
 import { locationService } from '../services/location.service.js';
 import { voiceService } from '../services/voice.service.js';
 import { bot } from '../services/telegram.service.js';
-
+import type { Trip } from '../types/index.js';
 
 export function startTrackingWorker() {
   // Track bus locations every 2 minutes
@@ -29,7 +29,9 @@ export function startTrackingWorker() {
             [trip.id]
           );
           
-          await voiceService.makeWakeUpCall(trip, trip.phone, 1);
+          // ✅ FIXED: TypeScript narrowing - assert phone as required since checked
+          const tripWithPhone = trip as Trip & { phone: string };
+          await voiceService.makeWakeUpCall(tripWithPhone, 1);
           
           await bot.telegram.sendMessage(
             trip.user_telegram_id,

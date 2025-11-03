@@ -19,9 +19,13 @@
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "node-cron": "^4.2.1",
-    "node-telegram-bot-api": "^0.66.0",
+    "node-telegram-bot-api": "^0.63.0",
     "pg": "^8.16.3",
     "telegraf": "^4.16.3",
     "twilio": "^5.10.4"
+  },
+  "dependencies": {
+    "@vapi-ai/server-sdk": "^0.10.2",
+    "irctc-connect": "^1.3.1"
   }
 }
