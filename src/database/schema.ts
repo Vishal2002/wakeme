@@ -47,6 +47,31 @@ export async function setupDatabase() {
         updated_at TIMESTAMP DEFAULT NOW()
       );
     `);
+    // Add this column to trips table
+await client.query(`
+  ALTER TABLE trips 
+  ADD COLUMN IF NOT EXISTS location_last_updated TIMESTAMP DEFAULT NOW();
+`);
+
+// Update trigger to auto-update this timestamp
+await client.query(`
+  CREATE OR REPLACE FUNCTION update_location_timestamp()
+  RETURNS TRIGGER AS $$
+  BEGIN
+    IF NEW.current_lat IS DISTINCT FROM OLD.current_lat 
+       OR NEW.current_lng IS DISTINCT FROM OLD.current_lng THEN
+      NEW.location_last_updated = NOW();
+    END IF;
+    RETURN NEW;
+  END;
+  $$ LANGUAGE plpgsql;
+
+  DROP TRIGGER IF EXISTS update_location_timestamp_trigger ON trips;
+  CREATE TRIGGER update_location_timestamp_trigger
+    BEFORE UPDATE ON trips
+    FOR EACH ROW
+    EXECUTE FUNCTION update_location_timestamp();
+`);
     
     await client.query(`
       CREATE TABLE IF NOT EXISTS call_logs (

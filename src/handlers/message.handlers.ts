@@ -4,6 +4,7 @@ import { userQueries, tripQueries } from '../database/queries.js';
 import { trainService } from '../services/train.service.js';
 import { keyboards } from '../services/telegram.service.js';
 import { locationService } from '../services/location.service.js';
+import { pool } from '../database/db.js';
 
 export async function handleBusButton(ctx: Context) {
   if (!ctx.from) return;
@@ -13,8 +14,12 @@ export async function handleBusButton(ctx: Context) {
   await tripQueries.createBusTrip(ctx.from.id);
   await ctx.reply(
     '🚌 *Bus Journey Setup*\n\n' +
-    'Share your current location 📍\n' +
-    '(Tap 📎 → Location)',
+    '📍 Share your LIVE location:\n\n' +
+    '1. Tap 📎 (attachment)\n' +
+    '2. Choose Location\n' +
+    '3. Tap "Share Live Location"\n' +
+    '4. Select duration: 8 hours\n\n' +
+    '⚠️ Important: Share LIVE location, not current location!',
     { parse_mode: 'Markdown' }
   );
 }
@@ -30,13 +35,15 @@ export async function handleTrainButton(ctx: Context) {
 }
 
 export async function handleLocation(ctx: Context) {
-  
-    if (!ctx.from || !ctx.message || !('location' in ctx.message)) return;
+  if (!ctx.from || !ctx.message || !('location' in ctx.message)) return;
   
   const trip = await tripQueries.getActiveTrip(ctx.from.id);
   const location = ctx.message.location;
+  //@ts-ignore
+  const isLiveLocation = location.live_period ? true : false;
 
-  console.log(`📍 Received location from user ${ctx.from.id}:`, location.latitude, location.longitude);
+  console.log(`📍 Received ${isLiveLocation ? 'LIVE' : 'static'} location from user ${ctx.from.id}:`, 
+    location.latitude, location.longitude);
 
   if (!trip) {
     await ctx.reply('Please start a journey first using /start');
@@ -44,15 +51,25 @@ export async function handleLocation(ctx: Context) {
   }
 
   if (trip.status === 'pending_location') {
+    if (!isLiveLocation) {
+      await ctx.reply(
+        '⚠️ Please share LIVE location, not static!\n\n' +
+        'Tap 📎 → Location → "Share Live Location" (not "Send My Current Location")'
+      );
+      return;
+    }
+
     await tripQueries.updateBusLocation(trip.id, location.latitude, location.longitude);
-    console.log(`✅ Updated trip ${trip.id} with starting location`);
+    console.log(`✅ Updated trip ${trip.id} with starting LIVE location`);
     
     await ctx.reply(
-      '📍 Got your location!\n\n' +
+      '✅ Live tracking started!\n\n' +
+      '📍 Your location will update automatically every 60 seconds.\n\n' +
       'Where are you going?\n' +
       '(Send destination name or share destination location)'
     );
   } else if (trip.status === 'awaiting_destination') {
+    // User sending destination location
     await tripQueries.setBusDestination(
       trip.id,
       'Your destination',
@@ -62,6 +79,13 @@ export async function handleLocation(ctx: Context) {
     console.log(`✅ Updated trip ${trip.id} with destination location`);
     
     await requestPhoneNumber(ctx, trip);
+  } else if (trip.status === 'active' && isLiveLocation) {
+    // Live location update - update current position
+    await pool.query(
+      'UPDATE trips SET current_lat = $1, current_lng = $2, updated_at = NOW() WHERE id = $3',
+      [location.latitude, location.longitude, trip.id]
+    );
+    console.log(`🔄 Live location update for trip ${trip.id}: (${location.latitude}, ${location.longitude})`);
   }
 }
 

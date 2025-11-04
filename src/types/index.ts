@@ -26,6 +26,8 @@ export interface User {
     arrival_time?: Date;
     alert_time?: Date;
     confirmed?: boolean;
+    updated_at?: Date;
+    created_at?: Date;
   }
   
   export interface CallLog {

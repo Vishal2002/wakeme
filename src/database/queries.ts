@@ -167,7 +167,7 @@ export const tripQueries = {
 
   // ✅ Also joined, so better type
   async getActiveBusTrips(): Promise<
-    (Trip & { phone?: string; name?: string })[]
+    (Trip & { phone?: string; name?: string; updated_at:Date })[]
   > {
     const result = await pool.query(`
       SELECT 

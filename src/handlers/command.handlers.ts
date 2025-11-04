@@ -1,6 +1,7 @@
 import { Context } from 'telegraf';
 import { userQueries, tripQueries } from '../database/queries.js';
 import { keyboards, formatTripStatus } from '../services/telegram.service.js';
+import { locationService } from '../services/location.service.js';
 
 export async function handleStart(ctx: Context) {
   if (!ctx.from) return;
@@ -29,14 +30,33 @@ export async function handleStatus(ctx: Context) {
   const trip = await tripQueries.getActiveTrip(ctx.from.id);
 
   if (!trip) {
-    await ctx.reply(
-      '📊 No active trips\n\nStart new journey:',
-      keyboards.main
-    );
+    await ctx.reply('📊 No active trips\n\nStart new journey:', keyboards.main);
     return;
   }
 
-  await ctx.reply(formatTripStatus(trip), { parse_mode: 'Markdown' });
+  if (trip.type === 'bus' && trip.current_lat && trip.destination_lat) {
+    const distance = locationService.calculateDistance(
+      trip.current_lat,
+      trip.current_lng!,
+      trip.destination_lat,
+      trip.destination_lng!
+    );
+    //@ts-ignore
+    const lastUpdate = new Date(trip.updated_at);
+    const minutesAgo = Math.floor((Date.now() - lastUpdate.getTime()) / (1000 * 60));
+    
+    await ctx.reply(
+      `📊 *Bus Journey Status*\n\n` +
+      `📍 Destination: ${trip.to_location}\n` +
+      `📏 Distance: ${distance.toFixed(1)} km\n` +
+      `⏱️ ETA: ~${Math.round(distance/40*60)} mins\n` +
+      `🔄 Last update: ${minutesAgo} min(s) ago\n\n` +
+      `${minutesAgo > 5 ? '⚠️ Location update delayed!' : '✅ Tracking active'}`,
+      { parse_mode: 'Markdown' }
+    );
+  } else {
+    await ctx.reply(formatTripStatus(trip), { parse_mode: 'Markdown' });
+  }
 }
 
 export async function handleCancel(ctx: Context) {
