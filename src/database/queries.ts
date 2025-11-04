@@ -1,6 +1,7 @@
 import { pool } from "./db.js";
 import type { User, Trip } from "../types/index.js";
 
+
 export const userQueries = {
   async getUser(telegramId: number): Promise<User | null> {
     const result = await pool.query(
@@ -132,15 +133,35 @@ export const tripQueries = {
 
   async getTripsNeedingAlerts(): Promise<(Trip & { phone?: string })[]> {
     const result = await pool.query(`
-        SELECT 
-        trips.*, 
-        users.phone 
-        FROM trips
-        JOIN users ON trips.user_telegram_id = users.telegram_id
-        WHERE trips.status = 'active' 
-        AND trips.alert_time <= NOW()
-        -- Remove this line: AND t.alert_time IS NOT NULL
-      `);
+      SELECT 
+        t.*,
+        u.phone,
+        u.name,
+        u.username,
+        u.telegram_id as user_telegram_id
+      FROM trips t
+      JOIN users u ON t.user_telegram_id = u.telegram_id
+      WHERE t.status = 'active' 
+        AND t.confirmed = FALSE 
+        AND t.alert_time <= NOW()
+        AND u.phone IS NOT NULL
+        AND t.id NOT IN (
+          SELECT DISTINCT trip_id 
+          FROM call_logs 
+          WHERE created_at > NOW() - INTERVAL '10 minutes'
+        )
+      ORDER BY t.alert_time ASC
+    `);
+
+    console.log(`   🔎 SQL Result: ${result.rows.length} row(s)`);
+    
+    if (result.rows.length > 0) {
+      console.log('   📋 Trips found:');
+      result.rows.forEach((row, i) => {
+        console.log(`      ${i + 1}. Trip ${row.id} - ${row.type} to ${row.to_location} (Alert: ${row.alert_time})`);
+      });
+    }
+
     return result.rows;
   },
 
@@ -149,14 +170,22 @@ export const tripQueries = {
     (Trip & { phone?: string; name?: string })[]
   > {
     const result = await pool.query(`
-        SELECT t.*, u.phone, u.telegram_id, u.name
-        FROM trips t
-        JOIN users u ON t.user_telegram_id = u.telegram_id
-        WHERE t.type = 'bus' 
+      SELECT 
+        t.*,
+        u.phone,
+        u.telegram_id,
+        u.name
+      FROM trips t
+      JOIN users u ON t.user_telegram_id = u.telegram_id
+      WHERE t.type = 'bus' 
         AND t.status = 'active'
         AND t.current_lat IS NOT NULL
         AND t.destination_lat IS NOT NULL
-      `);
+      ORDER BY t.created_at ASC
+    `);
+
+    console.log(`   🔎 SQL Result: ${result.rows.length} row(s)`);
+
     return result.rows;
   },
 };

@@ -181,8 +181,11 @@ async function startServer() {
     console.log("🤖 Telegram bot is running!");
 
     // Start background workers
+    console.log("🔥 Before starting workers...");
     startAlertWorker();
     startTrackingWorker();
+    console.log("🔥 After starting workers...");
+    
 
     // Graceful shutdown
     process.once("SIGINT", () => bot.stop("SIGINT"));
