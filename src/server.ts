@@ -34,13 +34,12 @@ app.use(express.json());
 // ============================================
 
 // Commands
-
 bot.command('start', handleStart);
 bot.command('status', handleStatus);
 bot.command('cancel', handleCancel);
 bot.command('awake', handleAwake);
 bot.command('help', handleHelp);
-bot.command('debug', handleDebug);  // ADD THIS LINE
+bot.command('debug', handleDebug);
 
 // Button handlers (MUST come before text handler)
 bot.hears("🚌 Bus", handleBusButton);
@@ -50,8 +49,18 @@ bot.hears("❌ Cancel", handleCancel);
 
 // Message handlers - ORDER MATTERS!
 bot.on(message("contact"), handleContact); // Contact BEFORE text
-bot.on(message("location"), handleLocation); // Location BEFORE text
+bot.on(message("location"), handleLocation); // Initial location share
 bot.on(message("text"), handleText); // Text handler LAST
+
+// ⭐ CRITICAL: Handle live location UPDATES (edited_message)
+bot.on("edited_message", async (ctx) => {
+  if (!ctx.editedMessage || !('location' in ctx.editedMessage)) return;
+  
+  console.log('📍 [EDITED MESSAGE] Received live location update');
+  
+  // Call the same location handler for updates
+  await handleLocation(ctx as any);
+});
 
 // Callback handlers
 bot.action("confirm_train", handleConfirmTrain);
@@ -153,6 +162,46 @@ app.post('/bland/webhook', async (req, res) => {
   }
 });
 
+// Debug endpoint to monitor trips
+app.get('/debug/trips', async (req, res) => {
+  try {
+    const { pool } = await import('./database/db.js');
+    const result = await pool.query(`
+      SELECT 
+        t.id,
+        t.user_telegram_id,
+        t.type,
+        t.status,
+        t.to_location,
+        t.current_lat,
+        t.current_lng,
+        t.destination_lat,
+        t.destination_lng,
+        t.updated_at,
+        t.created_at,
+        EXTRACT(EPOCH FROM (NOW() - t.updated_at))/60 as minutes_since_update,
+        u.phone,
+        u.name
+      FROM trips t
+      JOIN users u ON t.user_telegram_id = u.telegram_id
+      WHERE t.status IN ('active', 'awaiting_phone', 'awaiting_destination', 'pending_location')
+      ORDER BY t.updated_at DESC
+    `);
+    
+    res.json({
+      timestamp: new Date().toISOString(),
+      count: result.rows.length,
+      trips: result.rows.map(trip => ({
+        ...trip,
+        minutes_since_update: parseFloat(trip.minutes_since_update).toFixed(2),
+        location_fresh: parseFloat(trip.minutes_since_update) < 5
+      }))
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Health check
 app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
@@ -174,6 +223,7 @@ async function startServer() {
       console.log(`🤖 Telegram Bot: @${config.TELEGRAM_BOT_USERNAME}`);
       console.log(`🔗 Server URL: ${config.SERVER_URL}`);
       console.log(`✅ Health: ${config.SERVER_URL}/health`);
+      console.log(`🔍 Debug: ${config.SERVER_URL}/debug/trips`);
     });
 
     // Start Telegram bot

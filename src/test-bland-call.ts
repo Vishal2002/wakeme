@@ -7,7 +7,7 @@ dotenv.config();
 
 
 const apiKey = process.env.BLAND_API_KEY || 'your_bland_api_key_here';  // Set your key here or in .env
-const phoneNumber = '+916354770065';  // Your test number (E.164: +91 + 10 digits)
+const phoneNumber = '+917016301947';  // Your test number (E.164: +91 + 10 digits)
 const webhookUrl = process.env.SERVER_URL ? `${process.env.SERVER_URL}/bland/webhook` : null;  // Optional webhook
 
 async function testBlandCall() {

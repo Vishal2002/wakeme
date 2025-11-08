@@ -35,21 +35,30 @@ export async function handleTrainButton(ctx: Context) {
 }
 
 export async function handleLocation(ctx: Context) {
-  if (!ctx.from || !ctx.message || !('location' in ctx.message)) return;
+  if (!ctx.from) return;
+  
+  // Handle both regular message and edited_message (for live location updates)
+  const message = ctx.message || (ctx as any).editedMessage;
+  if (!message || !('location' in message)) return;
   
   const trip = await tripQueries.getActiveTrip(ctx.from.id);
-  const location = ctx.message.location;
+  const location = message.location;
   //@ts-ignore
   const isLiveLocation = location.live_period ? true : false;
+  const isUpdate = !!(ctx as any).editedMessage;
 
-  console.log(`📍 Received ${isLiveLocation ? 'LIVE' : 'static'} location from user ${ctx.from.id}:`, 
+  console.log(`📍 ${isUpdate ? '[UPDATE]' : '[INITIAL]'} ${isLiveLocation ? 'LIVE' : 'static'} location from user ${ctx.from.id}:`, 
     location.latitude, location.longitude);
 
   if (!trip) {
+    console.log(`⚠️ No active trip found for user ${ctx.from.id}`);
     await ctx.reply('Please start a journey first using /start');
     return;
   }
 
+  console.log(`   Trip ${trip.id} status: ${trip.status}`);
+
+  // 1. Initial location (start of journey)
   if (trip.status === 'pending_location') {
     if (!isLiveLocation) {
       await ctx.reply(
@@ -68,8 +77,11 @@ export async function handleLocation(ctx: Context) {
       'Where are you going?\n' +
       '(Send destination name or share destination location)'
     );
-  } else if (trip.status === 'awaiting_destination') {
-    // User sending destination location
+    return;
+  } 
+  
+  // 2. Destination location
+  if (trip.status === 'awaiting_destination') {
     await tripQueries.setBusDestination(
       trip.id,
       'Your destination',
@@ -79,13 +91,35 @@ export async function handleLocation(ctx: Context) {
     console.log(`✅ Updated trip ${trip.id} with destination location`);
     
     await requestPhoneNumber(ctx, trip);
-  } else if (trip.status === 'active' && isLiveLocation) {
-    // Live location update - update current position
+    return;
+  }
+  
+  // 3. Live location updates (THIS IS THE KEY PART!)
+  // Update location for ANY active trip status (awaiting_phone, active, etc.)
+  if (trip.type === 'bus' && trip.current_lat !== null) {
+    console.log(`🔄 Updating live location for trip ${trip.id}`);
+    console.log(`   Old: (${trip.current_lat}, ${trip.current_lng})`);
+    console.log(`   New: (${location.latitude}, ${location.longitude})`);
+    
     await pool.query(
       'UPDATE trips SET current_lat = $1, current_lng = $2, updated_at = NOW() WHERE id = $3',
       [location.latitude, location.longitude, trip.id]
     );
-    console.log(`🔄 Live location update for trip ${trip.id}: (${location.latitude}, ${location.longitude})`);
+    
+    console.log(`✅ Live location updated for trip ${trip.id}`);
+    
+    // Calculate and log distance if destination is set
+    if (trip.destination_lat) {
+      const distance = locationService.calculateDistance(
+        location.latitude,
+        location.longitude,
+        trip.destination_lat,
+        trip.destination_lng!
+      );
+      console.log(`   📏 Distance to destination: ${distance.toFixed(2)} km`);
+    }
+  } else {
+    console.log(`⚠️ Ignoring location update - not a bus trip or no initial location set`);
   }
 }
 
@@ -113,9 +147,10 @@ export async function handleContact(ctx: Context) {
         `✅ *All Set!*\n\n` +
         `🚌 ${trip.type === 'bus' ? 'Bus' : 'Train'} Journey Active\n` +
         `📍 Destination: ${trip.to_location}\n` +
-        `⏰ I'll call you 30 mins before arrival\n` +
+        `⏰ I'll call you when you're close\n` +
         `📞 ${contact.phone_number}\n\n` +
         `🟢 TRACKING STARTED\n\n` +
+        `Live location updates will continue automatically.\n` +
         `Have a safe journey! 😴`,
         { parse_mode: 'Markdown', ...keyboards.main }
       );
@@ -162,29 +197,28 @@ if (!ctx.from || !ctx.message || !('text' in ctx.message)) return;
   }
 
   // Handle destination name
-  // When user sends destination name
-if (trip && trip.status === 'awaiting_destination') {
-  console.log(`📍 Setting destination for trip ${trip.id}: ${text}`);
-  
-  // Get lat/lng from city name
-  const location = await locationService.geocodeAddress(text);
-  
-  if (location) {
-    await tripQueries.setBusDestination(
-      trip.id, 
-      text, 
-      location.lat, 
-      location.lng
-    );
-    console.log(`✅ Set destination: ${text} (${location.lat}, ${location.lng})`);
-  } else {
-    await tripQueries.setBusDestination(trip.id, text);
-    console.log(`⚠️ Set destination without coordinates: ${text}`);
+  if (trip && trip.status === 'awaiting_destination') {
+    console.log(`📍 Setting destination for trip ${trip.id}: ${text}`);
+    
+    // Get lat/lng from city name
+    const location = await locationService.geocodeAddress(text);
+    
+    if (location) {
+      await tripQueries.setBusDestination(
+        trip.id, 
+        text, 
+        location.lat, 
+        location.lng
+      );
+      console.log(`✅ Set destination: ${text} (${location.lat}, ${location.lng})`);
+    } else {
+      await tripQueries.setBusDestination(trip.id, text);
+      console.log(`⚠️ Set destination without coordinates: ${text}`);
+    }
+    
+    await requestPhoneNumber(ctx, trip);
+    return;
   }
-  
-  await requestPhoneNumber(ctx, trip);
-  return;
-}
 
   // Default response
   await ctx.reply(
@@ -218,9 +252,10 @@ async function requestPhoneNumber(ctx: Context, trip: any) {
       `✅ *All Set!*\n\n` +
       `🚌 Bus Journey Active\n` +
       `📍 Destination: ${trip.to_location}\n` +
-      `⏰ I'll call you 30 mins before arrival\n` +
+      `⏰ I'll call you when you're close\n` +
       `📞 ${user.phone}\n\n` +
       `🟢 TRACKING STARTED\n\n` +
+      `Live location updates will continue automatically.\n` +
       `Have a safe journey! 😴`,
       { parse_mode: 'Markdown', ...keyboards.main }
     );

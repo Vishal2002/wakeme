@@ -2,15 +2,13 @@ import cron from 'node-cron';
 import { pool } from '../database/db.js';
 import { tripQueries } from '../database/queries.js';
 import { locationService } from '../services/location.service.js';
-import { voiceService } from '../services/voice.service.js';
 import { bot } from '../services/telegram.service.js';
-import type { Trip } from '../types/index.js';
 
 export function startTrackingWorker() {
   console.log('🔧 Setting up tracking worker...');
   
-  // Check every 5 minutes (instead of 2)
-  const task = cron.schedule('*/5 * * * *', async () => {
+  // Check every 2 minutes for more responsive tracking
+  const task = cron.schedule('*/2 * * * *', async () => {
     const now = new Date().toISOString();
     console.log(`\n🚌 [${now}] Tracking worker triggered`);
     
@@ -42,11 +40,25 @@ export function startTrackingWorker() {
         
         if (minutesSinceUpdate > 10) {
           console.log(`      ⚠️ WARNING: Location stale (${minutesSinceUpdate.toFixed(1)} mins old)`);
-          await bot.telegram.sendMessage(
-            trip.user_telegram_id,
-            '⚠️ Live location stopped updating!\n\n' +
-            'Please share live location again to continue tracking.'
+          
+          // Check if we already sent stale warning
+          const sentStaleCheck = await pool.query(
+            'SELECT status FROM trips WHERE id = $1',
+            [trip.id]
           );
+          
+          if (sentStaleCheck.rows[0]?.status === 'active') {
+            await pool.query(
+              'UPDATE trips SET status = $1 WHERE id = $2',
+              ['stale_location', trip.id]
+            );
+            
+            await bot.telegram.sendMessage(
+              trip.user_telegram_id,
+              '⚠️ Live location stopped updating!\n\n' +
+              'Please share live location again to continue tracking.'
+            );
+          }
           continue;
         }
 
@@ -57,47 +69,49 @@ export function startTrackingWorker() {
           trip.destination_lng!
         );
 
-        console.log(`      📏 Distance: ${distance.toFixed(2)} km`);
+        console.log(`      📍 Distance: ${distance.toFixed(2)} km`);
 
-        // Progressive alerts based on distance
-        if (distance <= 5 && !trip.alert_time) {
-          // Final alert - 5km away
-          console.log(`      🚨 FINAL ALERT: Distance ≤ 5km`);
+        // 🔥 KEY FIX: Check if alert_time is already set
+        const hasAlerted = !!trip.alert_time;
+
+        // 🎯 ONLY SET alert_time - DON'T MAKE CALL HERE
+        if (distance <= 7 && !hasAlerted) {
+          console.log(`      🚨 CRITICAL ZONE: Distance ≤ 7km - SETTING ALERT TIME`);
           
+          // ✅ Set alert_time to NOW so alert.worker picks it up
           await pool.query(
             'UPDATE trips SET alert_time = NOW() WHERE id = $1',
             [trip.id]
           );
 
-          if (trip.phone) {
-            const tripWithPhone = trip as Trip & { phone: string };
-            const callId = await voiceService.makeWakeUpCall(tripWithPhone, 1);
-            
-            if (callId) {
-              console.log(`      ✅ Call queued: ${callId}`);
-            }
-
-            await bot.telegram.sendMessage(
-              trip.user_telegram_id,
-              `🚨 WAKE UP NOW!\n📍 ${distance.toFixed(1)} km to ${trip.to_location}\n📞 Calling you...`
-            );
-          }
-        } else if (distance <= 15 && distance > 5) {
-          // Warning alert - 15km away
+          console.log(`      ✅ Alert time set for trip ${trip.id}`);
+          
+          // Send Telegram warning (but don't make call yet)
+          await bot.telegram.sendMessage(
+            trip.user_telegram_id,
+            `🚨 APPROACHING DESTINATION!\n📍 ${distance.toFixed(1)} km to ${trip.to_location}\n📞 You'll receive a wake-up call shortly...`
+          );
+          
+        } else if (distance <= 15 && distance > 7 && !hasAlerted) {
+          // ⚠️ Warning zone - 15km away
           console.log(`      ⚠️ Warning zone: ${distance.toFixed(1)} km`);
           
           await bot.telegram.sendMessage(
             trip.user_telegram_id,
             `⚠️ Getting close!\n📍 ${distance.toFixed(1)} km to ${trip.to_location}\n⏰ ~${Math.round(distance/40*60)} mins remaining`
           );
-        } else if (distance <= 30 && distance > 15) {
-          // Info alert - 30km away
+          
+        } else if (distance <= 30 && distance > 15 && !hasAlerted) {
+          // ℹ️ Info zone - 30km away
           console.log(`      ℹ️ Info zone: ${distance.toFixed(1)} km`);
           
           await bot.telegram.sendMessage(
             trip.user_telegram_id,
             `ℹ️ Approaching destination\n📍 ${distance.toFixed(1)} km to ${trip.to_location}`
           );
+          
+        } else if (hasAlerted) {
+          console.log(`      ✓ Alert already triggered at ${trip.alert_time}`);
         } else {
           console.log(`      ✓ Still traveling: ${distance.toFixed(1)} km away`);
         }
@@ -107,10 +121,11 @@ export function startTrackingWorker() {
 
     } catch (error) {
       console.error('   ❌ Tracking worker error:', error);
+      console.error('   Stack:', (error as Error).stack);
     }
   });
 
-  console.log('✅ Tracking worker started (runs every 5 minutes)');
+  console.log('✅ Tracking worker started (runs every 2 minutes)');
   task.start();
   console.log('   Status: RUNNING');
 }
