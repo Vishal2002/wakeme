@@ -143,7 +143,7 @@ export const tripQueries = {
       JOIN users u ON t.user_telegram_id = u.telegram_id
       WHERE t.status = 'active' 
         AND t.confirmed = FALSE 
-        AND t.alert_time <= NOW()
+       AND t.alert_time <= NOW() + INTERVAL '1 minute'
         AND u.phone IS NOT NULL
         AND t.id NOT IN (
           SELECT DISTINCT trip_id 

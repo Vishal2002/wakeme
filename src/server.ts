@@ -226,15 +226,17 @@ async function startServer() {
       console.log(`🔍 Debug: ${config.SERVER_URL}/debug/trips`);
     });
 
+     // Start background workers
+     console.log("🔥 Before starting workers...");
+     startAlertWorker();
+     startTrackingWorker();
+     console.log("🔥 After starting workers...");
+
     // Start Telegram bot
-    await bot.launch();
+    bot.launch();
     console.log("🤖 Telegram bot is running!");
 
-    // Start background workers
-    console.log("🔥 Before starting workers...");
-    startAlertWorker();
-    startTrackingWorker();
-    console.log("🔥 After starting workers...");
+   
     
 
     // Graceful shutdown
