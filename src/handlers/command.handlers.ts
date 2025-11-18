@@ -87,7 +87,7 @@ export async function handleHelp(ctx: Context) {
     '/cancel - Cancel alert\n' +
     '/awake - Confirm you\'re awake\n' +
     '/help - Show this help\n' +
-    '/debug - Check your data (dev only)\n\n' +
+    // '/debug - Check your data (dev only)\n\n' +
     'Need help? Just ask!',
     { parse_mode: 'Markdown' }
   );
