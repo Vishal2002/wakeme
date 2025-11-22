@@ -188,6 +188,30 @@ export const tripQueries = {
 
     return result.rows;
   },
+
+  async getActiveTrainTrips(): Promise<
+    (Trip & { phone?: string; name?: string })[]
+  > {
+    const result = await pool.query(`
+      SELECT 
+        t.*,
+        u.phone,
+        u.telegram_id,
+        u.name
+      FROM trips t
+      JOIN users u ON t.user_telegram_id = u.telegram_id
+      WHERE t.type = 'train' 
+        AND t.status = 'active'
+        AND t.train_number IS NOT NULL
+        AND t.departure_time IS NOT NULL
+        AND t.to_location IS NOT NULL
+      ORDER BY t.departure_time ASC
+    `);
+
+    console.log(`   🔎 SQL Result: ${result.rows.length} active train(s)`);
+
+    return result.rows;
+  },
 };
 
 export const callQueries = {

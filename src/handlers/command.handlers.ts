@@ -2,6 +2,7 @@ import { Context } from 'telegraf';
 import { userQueries, tripQueries } from '../database/queries.js';
 import { keyboards, formatTripStatus } from '../services/telegram.service.js';
 import { locationService } from '../services/location.service.js';
+import { trainService } from '../services/train.service.js';
 
 export async function handleStart(ctx: Context) {
   if (!ctx.from) return;
@@ -34,6 +35,7 @@ export async function handleStatus(ctx: Context) {
     return;
   }
 
+  // Bus status
   if (trip.type === 'bus' && trip.current_lat && trip.destination_lat) {
     const distance = locationService.calculateDistance(
       trip.current_lat,
@@ -54,6 +56,54 @@ export async function handleStatus(ctx: Context) {
       `${minutesAgo > 5 ? '⚠️ Location update delayed!' : '✅ Tracking active'}`,
       { parse_mode: 'Markdown' }
     );
+  } 
+  // Train status with live tracking
+  else if (trip.type === 'train' && trip.train_number && trip.departure_time) {
+    await ctx.reply('🔍 Fetching live train status...');
+    
+    const journeyDate = trainService.formatDateForAPI(new Date(trip.departure_time));
+    const liveStatus = await trainService.getLiveTrainStatus(
+      trip.train_number,
+      journeyDate,
+      trip.to_location!
+    );
+
+    if (liveStatus) {
+      const etaMinutes = Math.round((liveStatus.distanceRemaining / 60) * 60);
+      
+      let statusText = `📊 *Train Journey Status*\n\n` +
+        `🚆 ${trip.train_name} (${trip.train_number})\n` +
+        `📍 Current: ${liveStatus.currentStation}\n` +
+        `⏭️ Next: ${liveStatus.nextStation}\n` +
+        `🎯 Destination: ${trip.to_location}\n\n` +
+        `📊 Progress:\n` +
+        `  • ${liveStatus.stationsRemaining} station(s) remaining\n` +
+        `  • ~${liveStatus.distanceRemaining} km to go\n` +
+        `  • ETA: ~${etaMinutes} mins\n` +
+        `  • Delay: ${liveStatus.delayMinutes > 0 ? `+${liveStatus.delayMinutes}` : '0'} mins\n\n`;
+      
+      if (liveStatus.upcomingStations.length > 0) {
+        statusText += `📋 Next 3 Stations:\n`;
+        liveStatus.upcomingStations.slice(0, 3).forEach(station => {
+          statusText += `  • ${station.station} - ${station.arr}\n`;
+        });
+      }
+
+      await ctx.reply(statusText, { parse_mode: 'Markdown' });
+    } else {
+      const depTime = new Date(trip.departure_time!);
+      const arrTime = new Date(trip.arrival_time!);
+      
+      await ctx.reply(
+        `📊 *Train Journey Status*\n\n` +
+        `🚆 ${trip.train_name} (${trip.train_number})\n` +
+        `📍 ${trip.from_location} → ${trip.to_location}\n` +
+        `🕐 Departure: ${depTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n` +
+        `🏁 Arrival: ${arrTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n\n` +
+        `⚠️ Live tracking unavailable (train not started or API error)`,
+        { parse_mode: 'Markdown' }
+      );
+    }
   } else {
     await ctx.reply(formatTripStatus(trip), { parse_mode: 'Markdown' });
   }

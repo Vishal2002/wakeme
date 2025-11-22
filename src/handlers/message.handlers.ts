@@ -168,17 +168,33 @@ export async function handleContact(ctx: Context) {
 }
 
 export async function handleText(ctx: Context) {
-if (!ctx.from || !ctx.message || !('text' in ctx.message)) return;
+  if (!ctx.from || !ctx.message || !('text' in ctx.message)) return;
   const text = ctx.message.text;
   const trip = await tripQueries.getActiveTrip(ctx.from.id);
 
   console.log(`💬 Text from user ${ctx.from.id}: "${text}"`);
 
-  // Handle PNR
+  // Handle PNR - REPLACE THIS SECTION
   if (/^\d{10}$/.test(text)) {
     console.log(`🚆 PNR detected: ${text}`);
     
+    await ctx.reply('🔍 Checking your PNR... Please wait.');
+    
     const trainData = await trainService.fetchTrainData(text);
+    
+    if (!trainData) {
+      await ctx.reply(
+        '❌ Could not fetch train details.\n\n' +
+        'Possible reasons:\n' +
+        '• Invalid PNR number\n' +
+        '• PNR not yet generated\n' +
+        '• IRCTC service temporarily down\n\n' +
+        'Please try again or use Bus mode.',
+        keyboards.main
+      );
+      return;
+    }
+
     await tripQueries.createTrainTrip(ctx.from.id, text, trainData);
 
     const depTime = new Date(trainData.departure);
@@ -188,19 +204,20 @@ if (!ctx.from || !ctx.message || !('text' in ctx.message)) return;
       `✅ *Found your ticket!*\n\n` +
       `🚆 ${trainData.train_name} (${trainData.train_number})\n` +
       `📍 ${trainData.from} → ${trainData.to}\n` +
-      `🗓️ ${depTime.toLocaleDateString('en-IN')}, ${depTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n` +
-      `🏁 Arrives: ${arrTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n\n` +
+      `🗓️ ${depTime.toLocaleDateString('en-IN')}\n` +
+      `🕐 Departure: ${depTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n` +
+      `🏁 Arrival: ${arrTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n\n` +
+      `⏰ I'll track your train and call when approaching.\n\n` +
       `Is this correct?`,
       { parse_mode: 'Markdown', ...keyboards.confirmTrain }
     );
     return;
   }
 
-  // Handle destination name
+  // Handle destination name (existing code - don't change)
   if (trip && trip.status === 'awaiting_destination') {
     console.log(`📍 Setting destination for trip ${trip.id}: ${text}`);
     
-    // Get lat/lng from city name
     const location = await locationService.geocodeAddress(text);
     
     if (location) {
