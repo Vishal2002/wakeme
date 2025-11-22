@@ -206,44 +206,44 @@ async function handleCallEnded(event: any) {
 }
 
 // Debug endpoint to monitor trips
-app.get('/debug/trips', async (req, res) => {
-  try {
-    const { pool } = await import('./database/db.js');
-    const result = await pool.query(`
-      SELECT 
-        t.id,
-        t.user_telegram_id,
-        t.type,
-        t.status,
-        t.to_location,
-        t.current_lat,
-        t.current_lng,
-        t.destination_lat,
-        t.destination_lng,
-        t.updated_at,
-        t.created_at,
-        EXTRACT(EPOCH FROM (NOW() - t.updated_at))/60 as minutes_since_update,
-        u.phone,
-        u.name
-      FROM trips t
-      JOIN users u ON t.user_telegram_id = u.telegram_id
-      WHERE t.status IN ('active', 'awaiting_phone', 'awaiting_destination', 'pending_location')
-      ORDER BY t.updated_at DESC
-    `);
+// app.get('/debug/trips', async (req, res) => {
+//   try {
+//     const { pool } = await import('./database/db.js');
+//     const result = await pool.query(`
+//       SELECT 
+//         t.id,
+//         t.user_telegram_id,
+//         t.type,
+//         t.status,
+//         t.to_location,
+//         t.current_lat,
+//         t.current_lng,
+//         t.destination_lat,
+//         t.destination_lng,
+//         t.updated_at,
+//         t.created_at,
+//         EXTRACT(EPOCH FROM (NOW() - t.updated_at))/60 as minutes_since_update,
+//         u.phone,
+//         u.name
+//       FROM trips t
+//       JOIN users u ON t.user_telegram_id = u.telegram_id
+//       WHERE t.status IN ('active', 'awaiting_phone', 'awaiting_destination', 'pending_location')
+//       ORDER BY t.updated_at DESC
+//     `);
     
-    res.json({
-      timestamp: new Date().toISOString(),
-      count: result.rows.length,
-      trips: result.rows.map(trip => ({
-        ...trip,
-        minutes_since_update: parseFloat(trip.minutes_since_update).toFixed(2),
-        location_fresh: parseFloat(trip.minutes_since_update) < 5
-      }))
-    });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
+//     res.json({
+//       timestamp: new Date().toISOString(),
+//       count: result.rows.length,
+//       trips: result.rows.map(trip => ({
+//         ...trip,
+//         minutes_since_update: parseFloat(trip.minutes_since_update).toFixed(2),
+//         location_fresh: parseFloat(trip.minutes_since_update) < 5
+//       }))
+//     });
+//   } catch (error: any) {
+//     res.status(500).json({ error: error.message });
+//   }
+// });
 
 // Health check
 app.get("/health", (req, res) => {
