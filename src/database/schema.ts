@@ -26,7 +26,7 @@ export async function setupDatabase() {
         type VARCHAR(10) NOT NULL CHECK (type IN ('bus', 'train')),
         from_location VARCHAR(200),
         to_location VARCHAR(200) NOT NULL,
-        status VARCHAR(20) DEFAULT 'active',
+        status VARCHAR(50) DEFAULT 'active',
         
         current_lat DECIMAL(10, 8),
         current_lng DECIMAL(11, 8),
