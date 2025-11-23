@@ -30,62 +30,23 @@ export class TrainService {
       
       const result = await checkPNRStatus(pnr);
       
-      console.log('📦 API Response Success:', result.success);
-      
-      if (!result.success) {
-        console.log('❌ API call failed:', result.error);
-        return null;
-      }
-      
-      if (!result.data) {
-        console.log('❌ No data in response');
+      if (!result.success || !result.data) {
+        console.log('❌ Could not fetch PNR:', result.error);
         return null;
       }
 
       const data = result.data;
       
-      // Log the full structure to see what we're getting
-      console.log('📦 Full data structure:', JSON.stringify(data, null, 2));
+      console.log('✅ PNR Status:', data.status);
+      console.log('✅ Train:', data.train.name, '(', data.train.number, ')');
+      console.log('✅ Route:', data.journey.from.name, '→', data.journey.to.name);
       
-      console.log('✅ PNR:', data.pnr);
-      console.log('✅ Status:', data.status);
-      console.log('✅ Train Name:', data.train?.name);
-      console.log('✅ Train Number:', data.train?.number);
-      console.log('✅ From:', data.journey?.from?.name);
-      console.log('✅ To:', data.journey?.to?.name);
+      // ✅ Parse ISO date strings directly
+      const departure = new Date(data.journey.departure); // "2025-11-23T19:45:00"
+      const arrival = new Date(data.journey.arrival);     // "2025-11-24T10:40:00"
       
-      // 🔥 FIX: Try multiple possible date fields
-      let journeyDate = data.journey?.dateOfJourney || 
-                        data.journey?.date || 
-                        data.dateOfJourney ||
-                        data.boardingDate;
-      
-      console.log('✅ Journey Date (raw):', journeyDate);
-      
-      // If still no date, use today's date as fallback
-      if (!journeyDate) {
-        console.log('⚠️ No date found, using today');
-        const today = new Date();
-        const day = String(today.getDate()).padStart(2, '0');
-        const month = String(today.getMonth() + 1).padStart(2, '0');
-        const year = today.getFullYear();
-        journeyDate = `${day}-${month}-${year}`;
-      }
-      
-      const [day, month, year] = journeyDate.split('-');
-      
-      // Handle times
-      const depTime = data.train?.departureTime || 
-                      data.journey?.departureTime || 
-                      data.departureTime || 
-                      '00:00';
-      const arrTime = data.train?.arrivalTime || 
-                      data.journey?.arrivalTime || 
-                      data.arrivalTime || 
-                      '23:59';
-      
-      console.log('⏰ Departure Time:', depTime);
-      console.log('⏰ Arrival Time:', arrTime);
+      console.log('✅ Departure:', departure.toISOString());
+      console.log('✅ Arrival:', arrival.toISOString());
       
       const trainData: TrainData = {
         pnr: data.pnr,
@@ -93,33 +54,30 @@ export class TrainService {
         train_name: data.train.name,
         from: data.journey.from.name,
         to: data.journey.to.name,
-        departure: new Date(`${year}-${month}-${day}T${depTime}:00`),
-        arrival: new Date(`${year}-${month}-${day}T${arrTime}:00`)
+        departure: departure,
+        arrival: arrival
       };
       
-      console.log('✅ Successfully parsed TrainData');
+      console.log('✅ Train data parsed successfully');
       
       return trainData;
       
     } catch (error) {
-      console.error('❌ Exception in fetchTrainData:', error);
-      console.error('❌ Error message:', (error as Error).message);
-      console.error('❌ Error stack:', (error as Error).stack);
+      console.error('❌ Train service error:', error);
+      console.error('Stack:', (error as Error).stack);
       return null;
     }
   }
 
   async getLiveTrainStatus(
     trainNumber: string, 
-    date: string,
+    date: string, // dd-mm-yyyy format
     destinationStation: string
   ): Promise<LiveTrainStatus | null> {
     try {
-      console.log(`🔍 Tracking train ${trainNumber} on ${date} to ${destinationStation}`);
+      console.log(`🔍 Tracking train ${trainNumber} on ${date}`);
       
       const result = await trackTrain(trainNumber, date);
-      
-      console.log('📦 Track API Success:', result.success);
       
       if (!result.success || !result.data) {
         console.log('❌ Could not track train:', result.error);
@@ -128,12 +86,14 @@ export class TrainService {
 
       const stations: TrainStation[] = result.data;
       
+      // Find current station
       const currentStation = stations.find(s => s.current === "true");
       if (!currentStation) {
-        console.log('⚠️ Could not determine current station');
+        console.log('⚠️ Train not started yet or no current location');
         return null;
       }
 
+      // Find destination index
       const destinationIndex = stations.findIndex(s => 
         s.station.toLowerCase().includes(destinationStation.toLowerCase())
       );
@@ -145,10 +105,12 @@ export class TrainService {
 
       const currentIndex = stations.indexOf(currentStation);
       
+      // Get upcoming stations
       const upcomingStations = stations
         .slice(currentIndex + 1, destinationIndex + 1)
         .filter(s => s.status === 'upcoming');
 
+      // Calculate remaining distance
       let distanceRemaining = 0;
       for (let i = currentIndex; i <= destinationIndex; i++) {
         const distance = parseInt(stations[i]?.distance || '0');
@@ -157,11 +119,15 @@ export class TrainService {
         }
       }
 
+      // Parse delay
       const delayString = currentStation.delay || "On Time";
       const delayMatch = delayString.match(/\+?(\d+)/);
       const delayMinutes = delayMatch ? parseInt(delayMatch[1]) : 0;
 
       const nextStation = upcomingStations[0]?.station || 'Destination';
+
+      console.log(`✅ Current: ${currentStation.station}, Next: ${nextStation}`);
+      console.log(`✅ ${upcomingStations.length} stations remaining, ~${distanceRemaining}km`);
 
       return {
         currentStation: currentStation.station,
