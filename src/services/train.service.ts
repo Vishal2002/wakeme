@@ -1,4 +1,5 @@
-import { checkPNRStatus, getTrainInfo, trackTrain } from 'irctc-connect';
+// src/services/train.service.ts
+import { checkPNRStatus, trackTrain } from 'irctc-connect';
 import type { TrainData } from '../types/index.js';
 
 interface TrainStation {
@@ -27,53 +28,79 @@ export class TrainService {
     try {
       console.log(`🔍 Fetching PNR: ${pnr}`);
       
-      // Using checkPNRStatus from irctc-connect
       const result = await checkPNRStatus(pnr);
       
-      if (!result.success || !result.data) {
-        console.log('❌ Invalid PNR or error:', result.error);
+      // Detailed logging
+      console.log('📦 API Response Success:', result.success);
+      console.log('📦 API Response Data:', result.data ? 'Present' : 'Missing');
+      console.log('📦 API Response Error:', result.error || 'None');
+      
+      if (!result.success) {
+        console.log('❌ API call failed:', result.error);
+        return null;
+      }
+      
+      if (!result.data) {
+        console.log('❌ No data in response');
         return null;
       }
 
-      const pnrData = result.data;
-      console.log('✅ PNR Data received:', pnrData);
-
-      // Parse dates from PNR data
-      const journeyDate = pnrData.journey.dateOfJourney; // Format: "dd-mm-yyyy"
+      const data = result.data;
+      
+      // Log what we got
+      console.log('✅ PNR:', data.pnr);
+      console.log('✅ Status:', data.status);
+      console.log('✅ Train Name:', data.train?.name);
+      console.log('✅ Train Number:', data.train?.number);
+      console.log('✅ From:', data.journey?.from?.name);
+      console.log('✅ To:', data.journey?.to?.name);
+      console.log('✅ Date:', data.journey?.dateOfJourney);
+      
+      // Extract data - exactly like your working index.js
+      const journeyDate = data.journey.dateOfJourney; // "dd-mm-yyyy"
       const [day, month, year] = journeyDate.split('-');
       
-      // Get train departure and arrival times
-      const depTime = pnrData.train.departureTime || '00:00';
-      const arrTime = pnrData.train.arrivalTime || '23:59';
+      // Handle times - they might not exist in all responses
+      const depTime = data.train.departureTime || data.journey.departureTime || '00:00';
+      const arrTime = data.train.arrivalTime || data.journey.arrivalTime || '23:59';
+      
+      console.log('⏰ Departure Time:', depTime);
+      console.log('⏰ Arrival Time:', arrTime);
       
       const trainData: TrainData = {
-        pnr: pnr,
-        train_number: pnrData.train.number,
-        train_name: pnrData.train.name,
-        from: pnrData.journey.from.name,
-        to: pnrData.journey.to.name,
+        pnr: data.pnr,
+        train_number: data.train.number,
+        train_name: data.train.name,
+        from: data.journey.from.name,
+        to: data.journey.to.name,
         departure: new Date(`${year}-${month}-${day}T${depTime}:00`),
         arrival: new Date(`${year}-${month}-${day}T${arrTime}:00`)
       };
       
+      console.log('✅ Parsed TrainData:', JSON.stringify(trainData, null, 2));
+      
       return trainData;
       
     } catch (error) {
-      console.error('❌ Train service error:', error);
+      console.error('❌ Exception in fetchTrainData:', error);
+      console.error('❌ Error name:', (error as Error).name);
+      console.error('❌ Error message:', (error as Error).message);
+      console.error('❌ Error stack:', (error as Error).stack);
       return null;
     }
   }
 
   async getLiveTrainStatus(
     trainNumber: string, 
-    date: string, // dd-mm-yyyy format
+    date: string,
     destinationStation: string
   ): Promise<LiveTrainStatus | null> {
     try {
       console.log(`🔍 Tracking train ${trainNumber} on ${date} to ${destinationStation}`);
       
-      // Using trackTrain from irctc-connect
       const result = await trackTrain(trainNumber, date);
+      
+      console.log('📦 Track API Success:', result.success);
       
       if (!result.success || !result.data) {
         console.log('❌ Could not track train:', result.error);
@@ -82,14 +109,12 @@ export class TrainService {
 
       const stations: TrainStation[] = result.data;
       
-      // Find current station (where current === "true")
       const currentStation = stations.find(s => s.current === "true");
       if (!currentStation) {
-        console.log('⚠️ Could not determine current station - train may not have started');
+        console.log('⚠️ Could not determine current station');
         return null;
       }
 
-      // Find destination station index
       const destinationIndex = stations.findIndex(s => 
         s.station.toLowerCase().includes(destinationStation.toLowerCase())
       );
@@ -101,12 +126,10 @@ export class TrainService {
 
       const currentIndex = stations.indexOf(currentStation);
       
-      // Get upcoming stations until destination
       const upcomingStations = stations
         .slice(currentIndex + 1, destinationIndex + 1)
         .filter(s => s.status === 'upcoming');
 
-      // Calculate distance remaining
       let distanceRemaining = 0;
       for (let i = currentIndex; i <= destinationIndex; i++) {
         const distance = parseInt(stations[i]?.distance || '0');
@@ -115,7 +138,6 @@ export class TrainService {
         }
       }
 
-      // Parse delay (format: "+10 min", "On Time", etc.)
       const delayString = currentStation.delay || "On Time";
       const delayMatch = delayString.match(/\+?(\d+)/);
       const delayMinutes = delayMatch ? parseInt(delayMatch[1]) : 0;
