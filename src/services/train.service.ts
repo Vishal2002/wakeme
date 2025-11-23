@@ -30,10 +30,7 @@ export class TrainService {
       
       const result = await checkPNRStatus(pnr);
       
-      // Detailed logging
       console.log('📦 API Response Success:', result.success);
-      console.log('📦 API Response Data:', result.data ? 'Present' : 'Missing');
-      console.log('📦 API Response Error:', result.error || 'None');
       
       if (!result.success) {
         console.log('❌ API call failed:', result.error);
@@ -47,22 +44,45 @@ export class TrainService {
 
       const data = result.data;
       
-      // Log what we got
+      // Log the full structure to see what we're getting
+      console.log('📦 Full data structure:', JSON.stringify(data, null, 2));
+      
       console.log('✅ PNR:', data.pnr);
       console.log('✅ Status:', data.status);
       console.log('✅ Train Name:', data.train?.name);
       console.log('✅ Train Number:', data.train?.number);
       console.log('✅ From:', data.journey?.from?.name);
       console.log('✅ To:', data.journey?.to?.name);
-      console.log('✅ Date:', data.journey?.dateOfJourney);
       
-      // Extract data - exactly like your working index.js
-      const journeyDate = data.journey.dateOfJourney; // "dd-mm-yyyy"
+      // 🔥 FIX: Try multiple possible date fields
+      let journeyDate = data.journey?.dateOfJourney || 
+                        data.journey?.date || 
+                        data.dateOfJourney ||
+                        data.boardingDate;
+      
+      console.log('✅ Journey Date (raw):', journeyDate);
+      
+      // If still no date, use today's date as fallback
+      if (!journeyDate) {
+        console.log('⚠️ No date found, using today');
+        const today = new Date();
+        const day = String(today.getDate()).padStart(2, '0');
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const year = today.getFullYear();
+        journeyDate = `${day}-${month}-${year}`;
+      }
+      
       const [day, month, year] = journeyDate.split('-');
       
-      // Handle times - they might not exist in all responses
-      const depTime = data.train.departureTime || data.journey.departureTime || '00:00';
-      const arrTime = data.train.arrivalTime || data.journey.arrivalTime || '23:59';
+      // Handle times
+      const depTime = data.train?.departureTime || 
+                      data.journey?.departureTime || 
+                      data.departureTime || 
+                      '00:00';
+      const arrTime = data.train?.arrivalTime || 
+                      data.journey?.arrivalTime || 
+                      data.arrivalTime || 
+                      '23:59';
       
       console.log('⏰ Departure Time:', depTime);
       console.log('⏰ Arrival Time:', arrTime);
@@ -77,13 +97,12 @@ export class TrainService {
         arrival: new Date(`${year}-${month}-${day}T${arrTime}:00`)
       };
       
-      console.log('✅ Parsed TrainData:', JSON.stringify(trainData, null, 2));
+      console.log('✅ Successfully parsed TrainData');
       
       return trainData;
       
     } catch (error) {
       console.error('❌ Exception in fetchTrainData:', error);
-      console.error('❌ Error name:', (error as Error).name);
       console.error('❌ Error message:', (error as Error).message);
       console.error('❌ Error stack:', (error as Error).stack);
       return null;
