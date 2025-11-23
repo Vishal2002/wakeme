@@ -84,6 +84,14 @@ export const tripQueries = {
     pnr: string,
     trainData: any
   ): Promise<number> {
+    console.log('📝 Creating train trip with data:');
+    console.log('   PNR:', pnr, '(length:', pnr.length, ')');
+    console.log('   Train Number:', trainData.train_number, '(length:', trainData.train_number?.length, ')');
+    console.log('   Train Name:', trainData.train_name, '(length:', trainData.train_name?.length, ')');
+    console.log('   From:', trainData.from, '(length:', trainData.from?.length, ')');
+    console.log('   To:', trainData.to, '(length:', trainData.to?.length, ')');
+    console.log('   Departure:', trainData.departure);
+    console.log('   Arrival:', trainData.arrival);
     const alertTime = new Date(trainData.arrival);
     alertTime.setMinutes(alertTime.getMinutes() - 30);
 
