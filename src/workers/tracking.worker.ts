@@ -196,7 +196,7 @@ export function startTrackingWorker() {
   console.log('🚀 Running tracking worker immediately...');
   workerFunction();
   
-  // Check every 5 minutes for both bus and train
+  // Check every 3 minutes for both bus and train
   const task = cron.schedule('*/3 * * * *', workerFunction);
   
   console.log('✅ Tracking worker started (runs every 3 minutes)');
