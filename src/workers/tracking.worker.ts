@@ -123,23 +123,45 @@ export function startTrackingWorker() {
           ) && !hasAlerted;
 
           if (shouldAlert) {
-            console.log(`      🚨 TRAIN ALERT: Setting alert time`);
+            console.log(`      🚨 TRAIN ALERT TRIGGERED!`);
+            console.log(`         Conditions met:`);
+            console.log(`         - Stations remaining: ${liveStatus.stationsRemaining} (threshold: ≤2)`);
+            console.log(`         - Distance remaining: ${liveStatus.distanceRemaining}km (threshold: ≤50km)`);
             
-            await pool.query(
-              'UPDATE trips SET alert_time = NOW() WHERE id = $1',
+            // ✅ Update alert_time and verify
+            const updateResult = await pool.query(
+              `UPDATE trips 
+               SET alert_time = NOW(), updated_at = NOW() 
+               WHERE id = $1 
+               RETURNING id, alert_time, confirmed, status`,
               [trip.id]
             );
-
-            console.log(`      ✅ Alert time set for trip ${trip.id}`);
             
-            const avgSpeed = 60; // km/h
+            if (updateResult.rows.length > 0) {
+              const updated = updateResult.rows[0];
+              console.log(`      ✅ Database updated successfully:`);
+              console.log(`         - Trip ID: ${updated.id}`);
+              console.log(`         - Alert time: ${updated.alert_time}`);
+              console.log(`         - Confirmed: ${updated.confirmed}`);
+              console.log(`         - Status: ${updated.status}`);
+              
+              // Verify the trip will be picked up by alert worker
+              console.log(`      🔍 Verification:`);
+              console.log(`         - alert_time <= NOW()? ${new Date(updated.alert_time) <= new Date() ? 'YES ✅' : 'NO ❌'}`);
+              console.log(`         - confirmed = false? ${updated.confirmed === false ? 'YES ✅' : 'NO ❌'}`);
+              console.log(`         - status = active? ${updated.status === 'active' ? 'YES ✅' : 'NO ❌'}`);
+            } else {
+              console.log(`      ❌ Database update failed - no rows returned`);
+            }
+            
+            const avgSpeed = 60;
             const etaMinutes = Math.round((liveStatus.distanceRemaining / avgSpeed) * 60);
             
             await bot.telegram.sendMessage(
               trip.user_telegram_id,
               `🚆 APPROACHING ${trip.to_location}!\n\n` +
               `📍 Current: ${liveStatus.currentStation}\n` +
-              `⏭️ Next: ${liveStatus.nextStation}\n` +
+              `⭐ Next: ${liveStatus.nextStation}\n` +
               `🎯 ${liveStatus.stationsRemaining} station(s) away\n` +
               `📏 ~${liveStatus.distanceRemaining} km remaining\n` +
               `⏱️ Delay: ${liveStatus.delayMinutes > 0 ? `+${liveStatus.delayMinutes}` : '0'} mins\n` +
@@ -147,6 +169,7 @@ export function startTrackingWorker() {
               `📞 You'll receive a wake-up call shortly...`
             );
             
+            console.log(`      ✅ Telegram alert sent to user ${trip.user_telegram_id}`);
           } else if (hasAlerted) {
             console.log(`      ✓ Alert already triggered at ${trip.alert_time}`);
           } else {

@@ -84,23 +84,24 @@ export const tripQueries = {
     pnr: string,
     trainData: any
   ): Promise<number> {
-    console.log('📝 Creating train trip with data:');
-    console.log('   PNR:', pnr, '(length:', pnr.length, ')');
-    console.log('   Train Number:', trainData.train_number, '(length:', trainData.train_number?.length, ')');
-    console.log('   Train Name:', trainData.train_name, '(length:', trainData.train_name?.length, ')');
-    console.log('   From:', trainData.from, '(length:', trainData.from?.length, ')');
-    console.log('   To:', trainData.to, '(length:', trainData.to?.length, ')');
+    console.log('🔹 Creating train trip with data:');
+    console.log('   PNR:', pnr);
+    console.log('   Train Number:', trainData.train_number);
+    console.log('   From:', trainData.from);
+    console.log('   To:', trainData.to);
     console.log('   Departure:', trainData.departure);
     console.log('   Arrival:', trainData.arrival);
-    const alertTime = new Date(trainData.arrival);
-    alertTime.setMinutes(alertTime.getMinutes() - 30);
-
+    
+    // ✅ DO NOT calculate alert_time here - let tracking worker set it
+    // const alertTime = new Date(trainData.arrival);
+    // alertTime.setMinutes(alertTime.getMinutes() - 30);
+  
     const result = await pool.query(
       `INSERT INTO trips (
           user_telegram_id, type, from_location, to_location,
           pnr, train_number, train_name, departure_time, arrival_time,
-          status, alert_time
-        ) VALUES ($1, 'train', $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          status
+        ) VALUES ($1, 'train', $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING id`,
       [
         telegramId,
@@ -111,10 +112,14 @@ export const tripQueries = {
         trainData.train_name,
         trainData.departure,
         trainData.arrival,
-        "awaiting_confirmation",
-        alertTime,
+        "awaiting_confirmation"
+        // ✅ alert_time will be NULL until tracking worker sets it dynamically
       ]
     );
+    
+    console.log('✅ Train trip created with ID:', result.rows[0].id);
+    console.log('   alert_time: NULL (will be set by tracking worker)');
+    
     return result.rows[0].id;
   },
 
@@ -151,12 +156,13 @@ export const tripQueries = {
       JOIN users u ON t.user_telegram_id = u.telegram_id
       WHERE t.status = 'active' 
         AND t.confirmed = FALSE 
-       AND t.alert_time <= NOW() + INTERVAL '1 minute'
+        AND t.alert_time IS NOT NULL             
+      AND t.alert_time <= NOW()     
         AND u.phone IS NOT NULL
         AND t.id NOT IN (
           SELECT DISTINCT trip_id 
           FROM call_logs 
-          WHERE created_at > NOW() - INTERVAL '10 minutes'
+          WHERE created_at > NOW() - INTERVAL '5 minutes'
         )
       ORDER BY t.alert_time ASC
     `);
