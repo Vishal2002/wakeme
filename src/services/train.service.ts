@@ -41,9 +41,8 @@ export class TrainService {
       console.log('✅ Train:', data.train.name, '(', data.train.number, ')');
       console.log('✅ Route:', data.journey.from.name, '→', data.journey.to.name);
       
-      // ✅ Parse ISO date strings directly
-      const departure = new Date(data.journey.departure); // "2025-11-23T19:45:00"
-      const arrival = new Date(data.journey.arrival);     // "2025-11-24T10:40:00"
+      const departure = new Date(data.journey.departure);
+      const arrival = new Date(data.journey.arrival);
       
       console.log('✅ Departure:', departure.toISOString());
       console.log('✅ Arrival:', arrival.toISOString());
@@ -75,59 +74,174 @@ export class TrainService {
     destinationStation: string
   ): Promise<LiveTrainStatus | null> {
     try {
-      console.log(`🔍 Tracking train ${trainNumber} on ${date}`);
+      console.log('\n🔍 ===== LIVE TRAIN TRACKING =====');
+      console.log(`📋 Train Number: ${trainNumber}`);
+      console.log(`📅 Date: ${date}`);
+      console.log(`🎯 Destination: ${destinationStation}`);
       
       const result = await trackTrain(trainNumber, date);
       
-      if (!result.success || !result.data) {
-        console.log('❌ Could not track train:', result.error);
+      console.log(`📡 API Response Success: ${result.success}`);
+      
+      if (!result.success) {
+        console.log('❌ API Error:', result.error);
+        return null;
+      }
+      
+      if (!result.data) {
+        console.log('❌ No data returned');
         return null;
       }
 
-      const stations: TrainStation[] = result.data;
+      const trackData = result.data;
+      
+      console.log(`✅ Train: ${trackData.trainName} (${trackData.trainNo})`);
+      console.log(`📍 Status Note: ${trackData.statusNote}`);
+      console.log(`🕐 Last Update: ${trackData.lastUpdate}`);
+      console.log(`🛤️ Total Stations: ${trackData.totalStations}`);
+
+      if (!trackData.stations || trackData.stations.length === 0) {
+        console.log('❌ No station data available');
+        return null;
+      }
+
+      // ✅ Convert irctc-connect format to our format
+      const stations: TrainStation[] = trackData.stations.map((station: any) => {
+        // Determine if station is completed, current, or upcoming
+        let status: 'completed' | 'current' | 'upcoming' = 'upcoming';
+        let isCurrent = false;
+
+        // Check if train has departed (completed)
+        if (station.departure.actual && station.departure.actual !== station.departure.scheduled) {
+          // If actual departure exists and is different from scheduled, likely completed
+          const actualDep = station.departure.actual;
+          if (actualDep && actualDep !== 'SRC' && !actualDep.includes('--')) {
+            status = 'completed';
+          }
+        }
+
+        // Check if this is current station (arrived but not departed)
+        if (station.arrival.actual && station.arrival.actual !== 'SRC' && 
+            (!station.departure.actual || station.departure.actual === '--:--')) {
+          status = 'current';
+          isCurrent = true;
+        }
+
+        // Parse distance (remove "km" suffix if present)
+        const distanceStr = station.distanceKm?.toString().replace(/[^\d]/g, '') || '0';
+
+        return {
+          station: station.stationName || station.stationCode,
+          arr: station.arrival.actual || station.arrival.scheduled || '--:--',
+          dep: station.departure.actual || station.departure.scheduled || '--:--',
+          delay: station.departure.delay || station.arrival.delay || 'On Time',
+          distance: distanceStr,
+          platform: station.platform || '',
+          status: status,
+          current: isCurrent ? 'true' : undefined
+        };
+      });
+
+      console.log(`✅ Converted ${stations.length} stations`);
       
       // Find current station
-      const currentStation = stations.find(s => s.current === "true");
-      if (!currentStation) {
-        console.log('⚠️ Train not started yet or no current location');
-        return null;
-      }
-
-      // Find destination index
-      const destinationIndex = stations.findIndex(s => 
-        s.station.toLowerCase().includes(destinationStation.toLowerCase())
-      );
-
-      if (destinationIndex === -1) {
-        console.log('⚠️ Destination not found in route');
-        return null;
-      }
-
-      const currentIndex = stations.indexOf(currentStation);
+      const currentStation = stations.find(s => s.current === 'true');
       
-      // Get upcoming stations
-      const upcomingStations = stations
-        .slice(currentIndex + 1, destinationIndex + 1)
-        .filter(s => s.status === 'upcoming');
+      if (!currentStation) {
+        console.log('⚠️ No current station found');
+        
+        // Check if all stations are completed (journey finished)
+        const allCompleted = stations.every(s => s.status === 'completed');
+        if (allCompleted) {
+          console.log('✅ Journey completed - train reached final destination');
+        } else {
+          console.log('⏳ Train hasn\'t started yet');
+          console.log('   First 3 stations:', stations.slice(0, 3).map(s => s.station).join(', '));
+        }
+        
+        return null;
+      }
 
-      // Calculate remaining distance
-      let distanceRemaining = 0;
-      for (let i = currentIndex; i <= destinationIndex; i++) {
-        const distance = parseInt(stations[i]?.distance || '0');
-        if (!isNaN(distance)) {
-          distanceRemaining += distance;
+      console.log(`📍 Current Station: ${currentStation.station}`);
+      console.log(`   Arrival: ${currentStation.arr}`);
+      console.log(`   Departure: ${currentStation.dep}`);
+      console.log(`   Delay: ${currentStation.delay}`);
+
+      // Find destination with improved matching
+      const destinationLower = destinationStation.toLowerCase().trim();
+      
+      let destinationIndex = -1;
+      
+      // Try exact match
+      destinationIndex = stations.findIndex(s => 
+        s.station.toLowerCase().trim() === destinationLower
+      );
+      
+      // Try contains match
+      if (destinationIndex === -1) {
+        destinationIndex = stations.findIndex(s => {
+          const stationLower = s.station.toLowerCase().trim();
+          return stationLower.includes(destinationLower) || 
+                 destinationLower.includes(stationLower);
+        });
+      }
+      
+      // Try first word match
+      if (destinationIndex === -1) {
+        const firstWord = destinationLower.split(/\s+/)[0];
+        if (firstWord && firstWord.length > 3) {
+          destinationIndex = stations.findIndex(s => 
+            s.station.toLowerCase().includes(firstWord)
+          );
         }
       }
 
-      // Parse delay
-      const delayString = currentStation.delay || "On Time";
-      const delayMatch = delayString.match(/\+?(\d+)/);
-      const delayMinutes = delayMatch ? parseInt(delayMatch[1]) : 0;
+      if (destinationIndex === -1) {
+        console.log('❌ Destination not found in route');
+        console.log('   Looking for:', destinationStation);
+        console.log('   Available stations:', stations.map(s => s.station).join(', '));
+        return null;
+      }
 
-      const nextStation = upcomingStations[0]?.station || 'Destination';
+      const destinationStationObj = stations[destinationIndex];
+      console.log(`✅ Destination found: ${destinationStationObj.station}`);
 
-      console.log(`✅ Current: ${currentStation.station}, Next: ${nextStation}`);
-      console.log(`✅ ${upcomingStations.length} stations remaining, ~${distanceRemaining}km`);
+      const currentIndex = stations.indexOf(currentStation);
+      
+      // Get upcoming stations between current and destination
+      const upcomingStations = stations.slice(currentIndex + 1, destinationIndex + 1);
+      
+      console.log(`📊 Stations remaining: ${upcomingStations.length}`);
+
+      // Calculate distance correctly
+      const currentDistance = parseInt(currentStation.distance || '0');
+      const destinationDistance = parseInt(destinationStationObj.distance || '0');
+      const distanceRemaining = Math.max(0, destinationDistance - currentDistance);
+
+      console.log(`📏 Distance: ${currentDistance} km → ${destinationDistance} km = ${distanceRemaining} km remaining`);
+
+      // Parse delay minutes
+      const delayString = currentStation.delay || 'On Time';
+      let delayMinutes = 0;
+      
+      if (delayString.toLowerCase().includes('min')) {
+        const match = delayString.match(/(\d+)\s*min/i);
+        if (match) {
+          delayMinutes = parseInt(match[1]);
+        }
+      } else if (delayString.match(/^\d+$/)) {
+        delayMinutes = parseInt(delayString);
+      }
+
+      const nextStation = upcomingStations[0]?.station || destinationStationObj.station;
+
+      console.log(`✅ Live Status Summary:`);
+      console.log(`   Current: ${currentStation.station}`);
+      console.log(`   Next: ${nextStation}`);
+      console.log(`   Stations remaining: ${upcomingStations.length}`);
+      console.log(`   Distance remaining: ${distanceRemaining} km`);
+      console.log(`   Delay: ${delayMinutes} minutes`);
+      console.log('=====================================\n');
 
       return {
         currentStation: currentStation.station,
@@ -140,6 +254,7 @@ export class TrainService {
       
     } catch (error) {
       console.error('❌ Train tracking error:', error);
+      console.error('Stack:', (error as Error).stack);
       return null;
     }
   }
@@ -148,7 +263,9 @@ export class TrainService {
     const day = String(date.getDate()).padStart(2, '0');
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const year = date.getFullYear();
-    return `${day}-${month}-${year}`;
+    const formatted = `${day}-${month}-${year}`;
+    console.log(`📅 Date formatted: ${date.toISOString()} → ${formatted}`);
+    return formatted;
   }
 }
 
