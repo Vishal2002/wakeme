@@ -94,8 +94,6 @@ export class TrainService {
       }
 
       const trackData = result.data;
-      console.log('=====================================');
-      console.log(trackData);
       
       console.log(`✅ Train: ${trackData.trainName} (${trackData.trainNo})`);
       console.log(`📍 Status Note: ${trackData.statusNote}`);
@@ -113,30 +111,32 @@ export class TrainService {
         let status: 'completed' | 'current' | 'upcoming' = 'upcoming';
         let isCurrent = false;
 
-        // Check if train has departed (completed)
-        if (station.departure.actual && station.departure.actual !== station.departure.scheduled) {
-          // If actual departure exists and is different from scheduled, likely completed
-          const actualDep = station.departure.actual;
-          if (actualDep && actualDep !== 'SRC' && !actualDep.includes('--')) {
-            status = 'completed';
+        const arrActual = station.arrival?.actual || '';
+        const arrScheduled = station.arrival?.scheduled || '';
+        const depActual = station.departure?.actual || '';
+        const depScheduled = station.departure?.scheduled || '';
+
+        // Station is COMPLETED if train has departed
+        if (depActual && depActual !== 'SRC' && depActual !== '--:--' && !depActual.includes('--')) {
+          status = 'completed';
+        }
+        // Station is CURRENT if train has arrived but not departed
+        else if (arrActual && arrActual !== 'SRC' && arrActual !== '--:--' && !arrActual.includes('--')) {
+          if (!depActual || depActual === 'SRC' || depActual === '--:--' || depActual.includes('--')) {
+            status = 'current';
+            isCurrent = true;
           }
         }
-
-        // Check if this is current station (arrived but not departed)
-        if (station.arrival.actual && station.arrival.actual !== 'SRC' && 
-            (!station.departure.actual || station.departure.actual === '--:--')) {
-          status = 'current';
-          isCurrent = true;
-        }
+        // Otherwise UPCOMING
 
         // Parse distance (remove "km" suffix if present)
         const distanceStr = station.distanceKm?.toString().replace(/[^\d]/g, '') || '0';
 
         return {
           station: station.stationName || station.stationCode,
-          arr: station.arrival.actual || station.arrival.scheduled || '--:--',
-          dep: station.departure.actual || station.departure.scheduled || '--:--',
-          delay: station.departure.delay || station.arrival.delay || 'On Time',
+          arr: arrActual || arrScheduled || '--:--',
+          dep: depActual || depScheduled || '--:--',
+          delay: station.departure?.delay || station.arrival?.delay || 'On Time',
           distance: distanceStr,
           platform: station.platform || '',
           status: status,
@@ -146,22 +146,51 @@ export class TrainService {
 
       console.log(`✅ Converted ${stations.length} stations`);
       
+      // Debug: Show first few stations with their status
+      console.log('\n📋 Station Status Check:');
+      stations.slice(0, 5).forEach((s, i) => {
+        console.log(`   ${i + 1}. ${s.station} - Status: ${s.status}${s.current ? ' [CURRENT]' : ''}`);
+        console.log(`      Arr: ${s.arr}, Dep: ${s.dep}, Delay: ${s.delay}`);
+      });
+      
       // Find current station
-      const currentStation = stations.find(s => s.current === 'true');
+      let currentStation = stations.find(s => s.current === 'true');
       
       if (!currentStation) {
-        console.log('⚠️ No current station found');
+        console.log('⚠️ No current station found via status detection');
         
-        // Check if all stations are completed (journey finished)
-        const allCompleted = stations.every(s => s.status === 'completed');
-        if (allCompleted) {
-          console.log('✅ Journey completed - train reached final destination');
-        } else {
-          console.log('⏳ Train hasn\'t started yet');
-          console.log('   First 3 stations:', stations.slice(0, 3).map(s => s.station).join(', '));
+        // Try to extract from statusNote: "Departed from VADOD(VXD) at 23:16"
+        if (trackData.statusNote) {
+          const match = trackData.statusNote.match(/(?:Departed from|Arrived at|at)\s+([A-Z\s]+)\(([A-Z]+)\)/i);
+          if (match) {
+            const stationCode = match[2];
+            console.log(`   Trying to find station from status: ${stationCode}`);
+            
+            // Find this station in our list
+            const inferredStation = stations.find(s => 
+              s.station.includes(stationCode) || 
+              s.station.toLowerCase().includes(match[1].toLowerCase())
+            );
+            
+            if (inferredStation) {
+              console.log(`   ✅ Found station from status: ${inferredStation.station}`);
+              currentStation = inferredStation;
+            }
+          }
         }
         
-        return null;
+        if (!currentStation) {
+          // Check if all stations are completed (journey finished)
+          const allCompleted = stations.every(s => s.status === 'completed');
+          if (allCompleted) {
+            console.log('✅ Journey completed - train reached final destination');
+          } else {
+            console.log('⏳ Train hasn\'t started yet');
+            console.log('   First 3 stations:', stations.slice(0, 3).map(s => s.station).join(', '));
+          }
+          
+          return null;
+        }
       }
 
       console.log(`📍 Current Station: ${currentStation.station}`);
