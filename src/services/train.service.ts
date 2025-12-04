@@ -94,6 +94,8 @@ export class TrainService {
       }
 
       const trackData = result.data;
+      console.log('=====================================');
+      console.log(trackData);
       
       console.log(`✅ Train: ${trackData.trainName} (${trackData.trainNo})`);
       console.log(`📍 Status Note: ${trackData.statusNote}`);
